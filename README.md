@@ -1,2 +1,20 @@
-# VoterSlip Generator
-This is a fully client-side React web application for extracting Bengali (Bangla) voter information from PDF voter lists and generating customized, print-ready voter slips in PDF format. The app works entirely in the browser with no backend or database, converts extracted voter data into a temporary in-memory JSON structure, replaces placeholders in user-provided or predefined PDF templates while preserving layout and fonts, and generates output PDFs with four voter slips per page in A4 or Legal size, ensuring accurate Bengali Unicode rendering without word breaking.
+<div align="center">
+<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+</div>
+
+# Run and deploy your AI Studio app
+
+This contains everything you need to run your app locally.
+
+View your app in AI Studio: https://ai.studio/apps/drive/1bcp2NoZXlAc0MpYX1cP09j_1B0Yrr2Je
+
+## Run Locally
+
+**Prerequisites:**  Node.js
+
+
+1. Install dependencies:
+   `npm install`
+2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+3. Run the app:
+   `npm run dev`
