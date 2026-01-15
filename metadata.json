@@ -1,5 +1,5 @@
 {
-  "name": "Nirbachon - Voter Slip Generator",
+  "name": "Voter Slip Generator",
   "description": "A secure, client-side application to extract voter data from PDFs and generate printable voter slips with accurate Bengali text rendering.",
   "requestFramePermissions": []
 }

@@ -329,7 +329,7 @@ const hasBengaliCharacters = (text: string): boolean => {
 };
 
 /**
- * Helper to get font
+ * Helper to get font - always uses Kalpurush from assets
  */
 const getFont = async (pdfDoc: PDFDocument, requireBengali: boolean = false): Promise<PDFFont> => {
   const fontBytes = await fetchBengaliFont();
@@ -337,9 +337,9 @@ const getFont = async (pdfDoc: PDFDocument, requireBengali: boolean = false): Pr
     pdfDoc.registerFontkit(fontkit);
     return await pdfDoc.embedFont(fontBytes, { subset: true });
   }
-  // If we still don't have a font (fetch failed), throw error for Bengali text
+  // If font fetch failed, throw error for Bengali text
   if (requireBengali) {
-    throw new Error('Bengali font is required for Bengali text. Default Kalpurush font failed to load.');
+    throw new Error('Kalpurush font failed to load from assets. Please check the font file.');
   }
   return await pdfDoc.embedFont(StandardFonts.Helvetica);
 };

@@ -3,7 +3,7 @@ export type Language = 'en' | 'bn';
 export const translations = {
   en: {
     // Header
-    appTitle: 'Nirbachon',
+    appTitle: 'Voter Slip Generator',
     
     // Steps
     step1: 'Voter Data',
@@ -60,12 +60,8 @@ export const translations = {
     noVoterData: 'No voter data available.',
     pdfGeneratedSuccess: 'PDF generated successfully!',
     pdfGenerationFailed: 'Failed to generate PDF. Check console.',
-    benhaliFontRequired: 'Bengali font required! Please upload a Bengali font in Step 2.5 to render Bengali text.',
+    benhaliFontRequired: 'Kalpurush font failed to load from assets. Please check the font file.',
     allDataCleared: 'All data cleared.',
-    bengaliFontSuccess: 'Bengali font loaded successfully!',
-    invalidFontFile: 'Please upload a .ttf or .otf font file.',
-    fontLoadFailed: 'Failed to load font file.',
-    fontCleared: 'Font cleared. Using default.',
     
     // Voter fields
     serial: '#',
@@ -75,7 +71,7 @@ export const translations = {
   },
   bn: {
     // Header
-    appTitle: 'নির্বাচন',
+    appTitle: 'Voter Slip Generator',
     
     // Steps
     step1: 'ভোটার ডেটা',
@@ -131,11 +127,9 @@ export const translations = {
     sampleDataLoaded: 'নমুনা ডেটা লোড হয়েছে।',
     noVoterData: 'কোন ভোটার ডেটা উপলব্ধ নেই।',
     pdfGeneratedSuccess: 'PDF সফলভাবে তৈরি হয়েছে!',
-    pdfGenerationFailed: 'PDF তৈরি করতে ব্যর্থ। কনসোল চেক করুন।',    benhaliFontRequired: 'বাংলা ফন্ট প্রয়োজন! বাংলা টেক্সট রেন্ডার করতে ধাপ ২.৫ এ একটি বাংলা ফন্ট আপলোড করুন।',    allDataCleared: 'সকল ডেটা মুছে ফেলা হয়েছে।',
-    bengaliFontSuccess: 'বাংলা ফন্ট সফলভাবে লোড হয়েছে!',
-    invalidFontFile: 'অনুগ্রহ করে একটি .ttf বা .otf ফন্ট ফাইল আপলোড করুন।',
-    fontLoadFailed: 'ফন্ট ফাইল লোড করতে ব্যর্থ।',
-    fontCleared: 'ফন্ট মুছে ফেলা হয়েছে। ডিফল্ট ব্যবহার করা হচ্ছে।',
+    pdfGenerationFailed: 'PDF তৈরি করতে ব্যর্থ। কনসোল চেক করুন।',
+    benhaliFontRequired: 'অ্যাসেট থেকে কালপুরুষ ফন্ট লোড করতে ব্যর্থ। অনুগ্রহ করে ফন্ট ফাইল পরীক্ষা করুন।',
+    allDataCleared: 'সকল ডেটা মুছে ফেলা হয়েছে।',
     
     // Voter fields
     serial: '#',
