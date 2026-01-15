@@ -60,7 +60,10 @@ function App() {
   const [voters, setVoters] = useState<VoterData[]>([]);
   const [template, setTemplate] = useState<TemplateConfig | null>(null);
   const [pageSize, setPageSize] = useState<PageSize>('A4');
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [isProcessingUpload, setIsProcessingUpload] = useState(false);
+  const [isProcessingGenerate, setIsProcessingGenerate] = useState(false);
+  const [uploadTimer, setUploadTimer] = useState(0);
+  const [generateTimer, setGenerateTimer] = useState(0);
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
 
   // New State for additional info
@@ -98,12 +101,21 @@ function App() {
   const handleVoterListUpload = async () => {
     if (!selectedVoterFile) return;
 
-    setIsProcessing(true);
+    setIsProcessingUpload(true);
+    setUploadTimer(0);
+    
+    // Start timer
+    const timerInterval = setInterval(() => {
+      setUploadTimer(prev => prev + 1);
+    }, 1000);
+    
     showToast(language === 'en' ? 'Processing PDF with OCR... This may take a moment.' : 'OCR দিয়ে PDF প্রক্রিয়া করা হচ্ছে... কিছুক্ষণ অপেক্ষা করুন।', 'success');
     
     try {
       const buffer = await selectedVoterFile.arrayBuffer();
       const extracted = await extractVotersFromPDF(buffer);
+      
+      clearInterval(timerInterval);
       
       if (extracted.length > 0) {
         setVoters(extracted);
@@ -112,11 +124,14 @@ function App() {
         showToast(t.noStructuredData, "error");
       }
     } catch (err) {
+      clearInterval(timerInterval);
       console.error(err);
       const errorMsg = err instanceof Error ? err.message : t.errorReadingPdf;
       showToast(errorMsg, "error");
     } finally {
-      setIsProcessing(false);
+      clearInterval(timerInterval);
+      setIsProcessingUpload(false);
+      setUploadTimer(0);
     }
   };
 
@@ -136,7 +151,14 @@ function App() {
     }
 
     // Vote Center and Voter Area are optional - use empty string if not provided
-    setIsProcessing(true);
+    setIsProcessingGenerate(true);
+    setGenerateTimer(0);
+    
+    // Start timer
+    const timerInterval = setInterval(() => {
+      setGenerateTimer(prev => prev + 1);
+    }, 1000);
+    
     try {
       const pdfBytes = await generatePDF(
         voters, 
@@ -144,6 +166,8 @@ function App() {
         pageSize,
         { voteCenter, voterArea }
       );
+      
+      clearInterval(timerInterval);
       
       // Trigger download
       const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
@@ -157,6 +181,7 @@ function App() {
       
       showToast(t.pdfGeneratedSuccess);
     } catch (err) {
+      clearInterval(timerInterval);
       console.error(err);
       const errorMessage = err instanceof Error ? err.message : '';
       if (errorMessage.includes('Bengali font is required')) {
@@ -165,7 +190,9 @@ function App() {
         showToast(t.pdfGenerationFailed, "error");
       }
     } finally {
-      setIsProcessing(false);
+      clearInterval(timerInterval);
+      setIsProcessingGenerate(false);
+      setGenerateTimer(0);
     }
   };
 
@@ -230,16 +257,14 @@ function App() {
                     </button>
                   )}
                 </div>
-                
                 <div className="space-y-4">
-                   <div className="border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-xl p-6 text-center hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors relative">
-                    <input 
-                      type="file" 
-                      id="voter-upload" 
-                      accept="application/pdf" 
-                      className="hidden" 
+                  <div className="relative border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-xl p-8 hover:border-blue-400 dark:hover:border-blue-600 transition-colors">
+                    <input
+                      id="voter-upload"
+                      type="file"
+                      accept=".pdf"
                       onChange={handleVoterListFileSelect}
-                      disabled={isProcessing}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                     />
                     <label htmlFor="voter-upload" className="cursor-pointer flex flex-col items-center gap-2">
                       <Upload size={32} className="text-gray-400" />
@@ -253,7 +278,7 @@ function App() {
                         <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">{(selectedVoterFile.size / 1024).toFixed(2)} KB</p>
                       </div>
                     )}
-                    {isProcessing && (
+                    {isProcessingUpload && (
                       <div className="absolute inset-0 bg-white/80 dark:bg-slate-900/80 flex items-center justify-center rounded-xl">
                         <div className="animate-spin rounded-full h-8 w-8 border-4 border-blue-600 border-t-transparent"></div>
                       </div>
@@ -263,10 +288,10 @@ function App() {
                   {selectedVoterFile && (
                     <button 
                       onClick={handleVoterListUpload}
-                      disabled={isProcessing}
+                      disabled={isProcessingUpload}
                       className="w-full py-2.5 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
-                      {isProcessing ? t.processing || 'Processing...' : t.uploadButton || 'Upload & Process'}
+                      {isProcessingUpload ? `${t.processing || 'Processing'} (${uploadTimer}s)` : t.uploadButton || 'Upload & Process'}
                     </button>
                   )}
 
@@ -385,7 +410,7 @@ function App() {
                 <h2 className="text-lg font-semibold mb-4">{t.dataPreview}</h2>
                 
                 {voters.length > 0 ? (
-                  <div className="overflow-auto h-[580px] space-y-3 pr-2 scrollbar-thin scrollbar-thumb-gray-200 dark:scrollbar-thumb-slate-700">
+                  <div className="overflow-auto min-h-[580px] max-h-[730px] space-y-3 pr-2 scrollbar-thin scrollbar-thumb-gray-200 dark:scrollbar-thumb-slate-700">
                     {voters.map((voter, idx) => (
                       <div key={idx} className="p-4 rounded-lg border border-gray-100 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-800/30">
                         <div className="flex justify-between items-start mb-2">
@@ -398,15 +423,24 @@ function App() {
                           {voter.voter_name_bn}
                         </h3>
                         <div className="mt-1 space-y-0.5 font-bengali text-sm text-gray-600 dark:text-gray-400">
-                          <p>{t.father} {voter.father_name_bn}</p>
-                          <p>{t.mother} {voter.mother_name_bn}</p>
-                          {voteCenter && <p className="text-blue-600 dark:text-blue-400">{t.center} {voteCenter}</p>}
+                          <p>পিতা: {voter.father_name_bn}</p>
+                          <p>মাতা: {voter.mother_name_bn}</p>
+                          {voter.date_of_birth_bn && voter.date_of_birth_bn !== 'N/A' && (
+                            <p>জন্ম তারিখ: {voter.date_of_birth_bn}</p>
+                          )}
+                          {voter.profession_bn && voter.profession_bn !== 'N/A' && (
+                            <p>পেশা: {voter.profession_bn}</p>
+                          )}
+                          {voter.address_bn && voter.address_bn !== 'N/A' && (
+                            <p>ঠিকানা: {voter.address_bn}</p>
+                          )}
+                          {voteCenter && <p className="text-blue-600 dark:text-blue-400">কেন্দ্র: {voteCenter}</p>}
                         </div>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <div className="flex flex-col items-center justify-center h-[580px] text-gray-400 text-center p-8 border-2 border-dashed border-gray-100 dark:border-slate-800 rounded-xl min-h-[200px]">
+                  <div className="flex flex-col items-center justify-center min-h-[580px] max-h-[730px] text-gray-400 text-center p-8 border-2 border-dashed border-gray-100 dark:border-slate-800 rounded-xl min-h-[200px]">
                     <Users size={48} className="mb-3 opacity-20" />
                     <p>{t.noDataYet}</p>
                     <p className="text-sm mt-1">{t.uploadOrLoad}</p>
@@ -440,16 +474,16 @@ function App() {
               {/* Generate Button */}
               <button
                 onClick={handleGenerate}
-                disabled={isProcessing || voters.length === 0}
+                disabled={isProcessingGenerate || voters.length === 0}
                 className={`w-full py-4 rounded-xl font-bold text-white shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2 transition-all transform active:scale-95 ${
-                  isProcessing || voters.length === 0
+                  isProcessingGenerate || voters.length === 0
                     ? 'bg-gray-300 dark:bg-slate-800 cursor-not-allowed shadow-none text-gray-500'
                     : 'bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700'
                 }`}
               >
-                {isProcessing ? (
+                {isProcessingGenerate ? (
                   <>
-                    <RefreshCw className="animate-spin" size={20} /> {t.processing}
+                    <RefreshCw className="animate-spin" size={20} /> {t.processing} ({generateTimer}s)
                   </>
                 ) : (
                   <>

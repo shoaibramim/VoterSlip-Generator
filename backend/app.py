@@ -6,8 +6,8 @@ import pytesseract
 import re
 
 app = Flask(__name__)
-# Allow requests from your frontend domains
-CORS(app, resources={r"/*": {"origins": ["*"]}}, supports_credentials=False)
+# Allow requests from your Vercel domain (or * for testing)
+CORS(app)
 
 # Tesseract configuration
 # In Docker, tesseract is usually at /usr/bin/tesseract
@@ -78,7 +78,63 @@ def parse_pages_text(pages_text):
                 i += 1
                 continue
             
-            # ... (Add rest of your Python logic here: Father, Mother, Date, etc.) ...
+            # -------- FATHER --------
+            if "পিতা:" in line:
+                vals = split_row_by_field(line, "পিতা:")
+                for idx, v in enumerate(vals):
+                    if idx < len(current):
+                        current[idx]["father_name_bn"] = v
+                i += 1
+                continue
+
+            # -------- MOTHER --------
+            if "মাতা:" in line:
+                vals = split_row_by_field(line, "মাতা:")
+                for idx, v in enumerate(vals):
+                    if idx < len(current):
+                        current[idx]["mother_name_bn"] = v
+                i += 1
+                continue
+
+            # -------- PROFESSION + DOB (ROBUST) --------
+            DATE_PATTERN = r"[০-৯]{2}/[০-৯]{2}/[০-৯]{4}"
+
+            if "পেশা:" in line:
+                parts = split_row_by_field(line, "পেশা:")
+
+                for idx, p in enumerate(parts):
+                    if idx >= len(current):
+                        continue
+
+                    # Extract date safely (if exists)
+                    date_match = re.search(DATE_PATTERN, p)
+                    if date_match:
+                        current[idx]["date_of_birth_bn"] = date_match.group()
+                        # remove both জন্ম তারিখ: and তারিখ:
+                        p = re.sub(r"(জন্ম\s*)?তারিখ[:：]?\s*" + DATE_PATTERN, "", p)
+
+                    # Clean remaining text → profession
+                    profession = p.strip(" ,।")
+                    current[idx]["profession_bn"] = profession if profession else "N/A"
+
+                i += 1
+                continue
+
+            # -------- ADDRESS (MULTILINE SAFE) --------
+            if "ঠিকানা:" in line:
+                addr_line = line
+                # lookahead for spillover
+                if i + 1 < len(lines) and not re.search(r"[০-৯]+\. নাম:", lines[i + 1]):
+                    if "ঠিকানা:" not in lines[i + 1]:
+                        addr_line += " " + lines[i + 1]
+                        i += 1
+
+                addr_parts = split_row_by_field(addr_line, "ঠিকানা:")
+                for idx, a in enumerate(addr_parts):
+                    if idx < len(current):
+                        current[idx]["address_bn"] = a.strip(", ")
+                i += 1
+                continue
             
             i += 1
             
@@ -101,43 +157,19 @@ def extract_voters():
         # Read file to bytes
         pdf_bytes = file.read()
         
-        # Get page count first
-        from pdf2image.pdf2image import pdfinfo_from_bytes
-        info = pdfinfo_from_bytes(pdf_bytes)
-        page_count = info.get('Pages', 1)
-        
-        print(f"Processing {page_count} pages...")
+        # Convert to Images
+        images = convert_from_bytes(pdf_bytes, dpi=200) # Lower DPI to save RAM on free tier
         
         pages_text = []
-        # Process pages ONE AT A TIME to minimize memory usage
-        for page_num in range(1, page_count + 1):
-            print(f"Processing page {page_num}/{page_count}")
-            # Convert single page at a time with lower DPI
-            images = convert_from_bytes(
-                pdf_bytes, 
-                dpi=150,  # Reduced from 200 to save memory
-                first_page=page_num,
-                last_page=page_num
-            )
-            
-            # Process immediately and discard image
-            if images:
-                txt = pytesseract.image_to_string(images[0], lang=LANG)
-                pages_text.append(txt)
-                # Clear the image from memory
-                del images
-        
-        print("OCR complete, parsing voters...")
+        for img in images:
+            txt = pytesseract.image_to_string(img, lang=LANG)
+            pages_text.append(txt)
+
         voters = parse_pages_text(pages_text)
-        print(f"Extracted {len(voters)} voters")
         return jsonify(voters)
         
-    except MemoryError:
-        return jsonify({'error': 'PDF too large. Please try with fewer pages or smaller file.'}), 413
     except Exception as e:
-        print(f"Error: {e}")
-        import traceback
-        traceback.print_exc()
+        print(e)
         return jsonify({'error': str(e)}), 500
 
 if __name__ == "__main__":

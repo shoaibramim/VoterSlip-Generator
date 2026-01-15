@@ -200,41 +200,112 @@ const parseVoterFromCluster = (cluster: TextItem[], boxIndex: number): VoterData
 
 /**
  * Extraction Logic
- * Calls the backend API to extract voter data using Tesseract OCR.
+ * Calls the Hugging Face Gradio API to extract voter data using Tesseract OCR.
  */
 export const extractVotersFromPDF = async (fileData: ArrayBuffer): Promise<VoterData[]> => {
   try {
-    const apiUrl = import.meta.env.VITE_API_URL;
-    if (!apiUrl) {
-      throw new Error('Backend API URL not configured. Please set VITE_API_URL in .env.local');
+    const spaceId = import.meta.env.VITE_API_URL;
+    if (!spaceId) {
+      throw new Error('Backend Space ID not configured. Please set VITE_API_URL in .env.local');
     }
 
-    // Create FormData and append the PDF file
-    const formData = new FormData();
+    console.log('Connecting to Hugging Face Space:', spaceId);
+
+    // Dynamically import the Gradio client
+    const { Client } = await import('@gradio/client');
+
+    console.log('Preparing PDF file for upload...');
+
+    // Create a File object (not just Blob) with proper filename
     const blob = new Blob([fileData], { type: 'application/pdf' });
-    formData.append('file', blob, 'voter_list.pdf');
+    const file = new File([blob], 'voter_list.pdf', { 
+      type: 'application/pdf',
+      lastModified: Date.now()
+    });
+    
+    console.log('Connecting to client...');
 
-    console.log('Sending PDF to backend for OCR extraction...');
+    // Connect to the Hugging Face Space
+    const client = await Client.connect(spaceId);
 
-    // Call the backend API
-    const response = await fetch(`${apiUrl}/extract`, {
-      method: 'POST',
-      body: formData,
+    console.log('Uploading PDF to backend for OCR extraction...');
+
+    // Use client.submit instead of client.predict to handle file uploads better
+    const submission = client.submit("/predict", { 
+      pdf_file: file
     });
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(errorData.error || `Backend returned ${response.status}`);
+    console.log('Submission created, waiting for messages...');
+
+    // Wait for the result without timeout - let it take as long as needed
+    let voters: VoterData[] = [];
+    let hasData = false;
+    let messageCount = 0;
+    
+    console.log('Starting to listen for messages...');
+    
+    try {
+      for await (const message of submission) {
+        messageCount++;
+        console.log(`=== Message #${messageCount} ===`);
+        console.log('Message type:', message.type);
+        console.log('Full message:', JSON.stringify(message, null, 2));
+        
+        if (message.type === "data") {
+          hasData = true;
+          console.log('Received data from backend');
+          console.log('Result data:', message.data);
+          
+          const responseData = message.data[0];
+          
+          // Check if it's an error object
+          if (responseData && typeof responseData === 'object' && 'error' in responseData) {
+            throw new Error(String(responseData.error));
+          }
+          
+          // Parse the data
+          if (Array.isArray(responseData)) {
+            voters = responseData as VoterData[];
+          } else if (typeof responseData === 'object' && responseData !== null) {
+            // Don't wrap non-array objects, skip them
+            console.warn('Received non-array response data:', responseData);
+          }
+          
+          break; // Exit after receiving data
+        } else if (message.type === "status") {
+          console.log('Status:', message.stage, typeof message.message === 'string' ? message.message : '');
+          
+          if (message.stage === "error") {
+            const errorMsg = typeof message.message === 'string' ? message.message : 'Unknown error from backend';
+            throw new Error(errorMsg);
+          }
+          
+          if (message.stage === "complete") {
+            console.log('Processing complete');
+            break;
+          }
+        }
+      }
+      
+      console.log(`Total messages received: ${messageCount}`);
+      console.log(`Has data: ${hasData}`);
+    } catch (err) {
+      console.error('Error in message loop:', err);
+      throw err;
     }
 
-    const voters: VoterData[] = await response.json();
-    console.log(`✓ Extraction complete: ${voters.length} voters received from backend`);
+    if (!hasData || voters.length === 0) {
+      throw new Error('No voters extracted from PDF. The backend may have returned empty results.');
+    }
 
+    console.log(`✓ Extraction complete: ${voters.length} voters received from backend`);
     return voters;
   } catch (error) {
     console.error('PDF Extraction Error:', error);
+    console.error('Error details:', JSON.stringify(error, null, 2));
+    
     if (error instanceof Error) {
-      throw error;
+      throw new Error(`Backend error: ${error.message}`);
     }
     throw new Error('Failed to extract voters from PDF. Please check your internet connection and try again.');
   }
@@ -319,10 +390,10 @@ const createDefaultTemplate = async (): Promise<TemplateConfig> => {
   const pdfDoc = await PDFDocument.create();
   const font = await getFont(pdfDoc);
 
-  // Size: 3.5 inch x 2.2 inch (approx standard card size)
-  // 1 inch = 72 pts. 3.5 * 72 = 252, 2.2 * 72 = 158.4
+  // Size: 3.5 inch x 2.8 inch (approx standard card size with more fields)
+  // 1 inch = 72 pts. 3.5 * 72 = 252, 2.8 * 72 = 201.6
   const width = 260;
-  const height = 180;
+  const height = 210;
   const page = pdfDoc.addPage([width, height]);
 
   // Draw Box
@@ -363,50 +434,184 @@ const createDefaultTemplate = async (): Promise<TemplateConfig> => {
   });
 
   const fontSize = 9;
-  const labelX = 12;
-  const valueX = 75;
+  const leftX = 12;
+  const rightX = 140; // X position for right side fields
   let currentY = height - 52;
-  const lineHeight = 13;
+  const lineHeight = 14;
 
   const mappings: Record<string, TemplateFieldLocation> = {};
 
-  const addField = (label: string, key: string, bold: boolean = false) => {
-    page.drawText(label, { 
-      x: labelX, 
-      y: currentY, 
-      size: fontSize, 
-      font, 
-      color: rgb(0.2, 0.2, 0.2) 
-    });
-    mappings[key] = {
-      pageIndex: 0,
-      x: valueX,
-      y: currentY,
-      fontSize: fontSize,
-      key
-    };
-    currentY -= lineHeight;
+  // Vote Center and Voter Area at the top
+  page.drawText('ভোট কেন্দ্র:', { 
+    x: leftX, 
+    y: currentY, 
+    size: fontSize, 
+    font, 
+    color: rgb(0.3, 0.3, 0.3) 
+  });
+  mappings['VOTE_CENTER'] = {
+    pageIndex: 0,
+    x: leftX + 60,
+    y: currentY,
+    fontSize: fontSize,
+    key: 'VOTE_CENTER'
   };
+  currentY -= lineHeight;
 
-  // Add Vote Center and Voter Area at the top (most important fields)
-  addField('Vote Center:', 'VOTE_CENTER');
-  addField('Voter Area:', 'VOTER_AREA');
+  page.drawText('ভোটার এলাকা:', { 
+    x: leftX, 
+    y: currentY, 
+    size: fontSize, 
+    font, 
+    color: rgb(0.3, 0.3, 0.3) 
+  });
+  mappings['VOTER_AREA'] = {
+    pageIndex: 0,
+    x: leftX + 60,
+    y: currentY,
+    fontSize: fontSize,
+    key: 'VOTER_AREA'
+  };
+  currentY -= lineHeight;
   
   // Add a separator line
   currentY -= 3;
   page.drawLine({
-    start: { x: labelX, y: currentY },
-    end: { x: width - labelX, y: currentY },
+    start: { x: leftX, y: currentY },
+    end: { x: width - leftX, y: currentY },
     thickness: 0.5,
     color: rgb(0.8, 0.8, 0.8),
   });
-  currentY -= 8;
+  currentY -= 10;
   
-  addField('Serial No:', 'SERIAL');
-  addField('Voter No:', 'NO');
-  addField('Name:', 'NAME');
-  addField('Father:', 'FATHER');
-  addField('Mother:', 'MOTHER');
+  // Line 1: Serial No (left) and Name (right)
+  page.drawText('ক্রমিক:', { 
+    x: leftX, 
+    y: currentY, 
+    size: fontSize - 1, 
+    font, 
+    color: rgb(0.3, 0.3, 0.3) 
+  });
+  mappings['SERIAL'] = {
+    pageIndex: 0,
+    x: leftX + 32,
+    y: currentY,
+    fontSize: fontSize,
+    key: 'SERIAL'
+  };
+  page.drawText('নাম:', { 
+    x: leftX + 55, 
+    y: currentY, 
+    size: fontSize - 1, 
+    font, 
+    color: rgb(0.3, 0.3, 0.3) 
+  });
+  mappings['NAME'] = {
+    pageIndex: 0,
+    x: leftX + 75,
+    y: currentY,
+    fontSize: fontSize + 1,
+    key: 'NAME'
+  };
+  currentY -= lineHeight;
+  
+  // Line 2: Voter No
+  page.drawText('ভোটার নং:', { 
+    x: leftX, 
+    y: currentY, 
+    size: fontSize - 1, 
+    font, 
+    color: rgb(0.3, 0.3, 0.3) 
+  });
+  mappings['NO'] = {
+    pageIndex: 0,
+    x: leftX + 48,
+    y: currentY,
+    fontSize: fontSize,
+    key: 'NO'
+  };
+  currentY -= lineHeight;
+  
+  // Line 3: Father Name
+  page.drawText('পিতা:', { 
+    x: leftX, 
+    y: currentY, 
+    size: fontSize - 1, 
+    font, 
+    color: rgb(0.3, 0.3, 0.3) 
+  });
+  mappings['FATHER'] = {
+    pageIndex: 0,
+    x: leftX + 27,
+    y: currentY,
+    fontSize: fontSize,
+    key: 'FATHER'
+  };
+  currentY -= lineHeight;
+  
+  // Line 4: Mother Name
+  page.drawText('মাতা:', { 
+    x: leftX, 
+    y: currentY, 
+    size: fontSize - 1, 
+    font, 
+    color: rgb(0.3, 0.3, 0.3) 
+  });
+  mappings['MOTHER'] = {
+    pageIndex: 0,
+    x: leftX + 27,
+    y: currentY,
+    fontSize: fontSize,
+    key: 'MOTHER'
+  };
+  currentY -= lineHeight;
+  
+  // Line 5: Profession (left) and Date of Birth (right)
+  page.drawText('পেশা:', { 
+    x: leftX, 
+    y: currentY, 
+    size: fontSize - 1, 
+    font, 
+    color: rgb(0.3, 0.3, 0.3) 
+  });
+  mappings['PROFESSION'] = {
+    pageIndex: 0,
+    x: leftX + 27,
+    y: currentY,
+    fontSize: fontSize - 1,
+    key: 'PROFESSION'
+  };
+  page.drawText('জন্ম তারিখ:', { 
+    x: rightX, 
+    y: currentY, 
+    size: fontSize - 1, 
+    font, 
+    color: rgb(0.3, 0.3, 0.3) 
+  });
+  mappings['DOB'] = {
+    pageIndex: 0,
+    x: rightX + 50,
+    y: currentY,
+    fontSize: fontSize - 1,
+    key: 'DOB'
+  };
+  currentY -= lineHeight;
+  
+  // Line 6: Address
+  page.drawText('ঠিকানা:', { 
+    x: leftX, 
+    y: currentY, 
+    size: fontSize - 1, 
+    font, 
+    color: rgb(0.3, 0.3, 0.3) 
+  });
+  mappings['ADDRESS'] = {
+    pageIndex: 0,
+    x: leftX + 35,
+    y: currentY,
+    fontSize: fontSize - 1,
+    key: 'ADDRESS'
+  };
 
   const pdfBytes = await pdfDoc.save();
 
