@@ -200,76 +200,43 @@ const parseVoterFromCluster = (cluster: TextItem[], boxIndex: number): VoterData
 
 /**
  * Extraction Logic
- * Parses the uploaded PDF and attempts to identify voter records using spatial clustering.
+ * Calls the backend API to extract voter data using Tesseract OCR.
  */
 export const extractVotersFromPDF = async (fileData: ArrayBuffer): Promise<VoterData[]> => {
   try {
-    const loadingTask = pdfjsLib.getDocument({ data: fileData });
-    const pdf = await loadingTask.promise;
-    const extractedVoters: VoterData[] = [];
-    
-    console.log(`Starting PDF extraction: ${pdf.numPages} pages total`);
-    
-    let globalVoterIndex = 0;
-    
-    // Process ALL pages in the PDF
-    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-      console.log(`Processing page ${pageNum}/${pdf.numPages}...`);
-      
-      const page = await pdf.getPage(pageNum);
-      const textContent = await page.getTextContent();
-      const viewport = page.getViewport({ scale: 1.0 });
-      
-      // Extract text items with their spatial positions
-      const textItems: TextItem[] = [];
-      
-      for (const item of textContent.items as any[]) {
-        const text = item.str.trim();
-        if (!text) continue;
-        
-        // Get position from transformation matrix
-        const tx = item.transform[4];
-        const ty = item.transform[5];
-        const width = item.width || 0;
-        const height = item.height || 10;
-        
-        textItems.push({
-          text,
-          x: tx,
-          y: ty,
-          width,
-          height
-        });
-      }
-      
-      console.log(`Page ${pageNum}: Found ${textItems.length} text items`);
-      
-      // Cluster text items spatially into potential voter cards
-      const clusters = clusterTextItems(textItems);
-      console.log(`Page ${pageNum}: Formed ${clusters.length} clusters`);
-      
-      // Parse each cluster as a potential voter
-      for (const cluster of clusters) {
-        globalVoterIndex++;
-        const voter = parseVoterFromCluster(cluster, globalVoterIndex);
-        
-        if (voter) {
-          console.log(`✓ Page ${pageNum}: Extracted voter #${globalVoterIndex} - ${voter.voter_name_bn} (${voter.voter_no_bd})`);
-          extractedVoters.push(voter);
-        } else {
-          console.log(`✗ Page ${pageNum}: Cluster #${globalVoterIndex} rejected (missing name or voter no)`);
-        }
-      }
+    const apiUrl = import.meta.env.VITE_API_URL;
+    if (!apiUrl) {
+      throw new Error('Backend API URL not configured. Please set VITE_API_URL in .env.local');
     }
-    
-    console.log(`\n═══════════════════════════════════`);
-    console.log(`✓ Extraction complete: ${extractedVoters.length} valid voters found`);
-    console.log(`═══════════════════════════════════\n`);
-    
-    return extractedVoters;
+
+    // Create FormData and append the PDF file
+    const formData = new FormData();
+    const blob = new Blob([fileData], { type: 'application/pdf' });
+    formData.append('file', blob, 'voter_list.pdf');
+
+    console.log('Sending PDF to backend for OCR extraction...');
+
+    // Call the backend API
+    const response = await fetch(`${apiUrl}/extract`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(errorData.error || `Backend returned ${response.status}`);
+    }
+
+    const voters: VoterData[] = await response.json();
+    console.log(`✓ Extraction complete: ${voters.length} voters received from backend`);
+
+    return voters;
   } catch (error) {
     console.error('PDF Extraction Error:', error);
-    throw new Error('Failed to read PDF file. Please ensure it is a valid PDF document.');
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error('Failed to extract voters from PDF. Please check your internet connection and try again.');
   }
 };
 

@@ -99,6 +99,8 @@ function App() {
     if (!selectedVoterFile) return;
 
     setIsProcessing(true);
+    showToast(language === 'en' ? 'Processing PDF with OCR... This may take a moment.' : 'OCR দিয়ে PDF প্রক্রিয়া করা হচ্ছে... কিছুক্ষণ অপেক্ষা করুন।', 'success');
+    
     try {
       const buffer = await selectedVoterFile.arrayBuffer();
       const extracted = await extractVotersFromPDF(buffer);
@@ -111,7 +113,8 @@ function App() {
       }
     } catch (err) {
       console.error(err);
-      showToast(t.errorReadingPdf, "error");
+      const errorMsg = err instanceof Error ? err.message : t.errorReadingPdf;
+      showToast(errorMsg, "error");
     } finally {
       setIsProcessing(false);
     }

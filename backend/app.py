@@ -6,8 +6,8 @@ import pytesseract
 import re
 
 app = Flask(__name__)
-# Allow requests from your Vercel domain (or * for testing)
-CORS(app)
+# Allow requests from your frontend domains
+CORS(app, resources={r"/*": {"origins": ["*"]}}, supports_credentials=False)
 
 # Tesseract configuration
 # In Docker, tesseract is usually at /usr/bin/tesseract
@@ -101,19 +101,43 @@ def extract_voters():
         # Read file to bytes
         pdf_bytes = file.read()
         
-        # Convert to Images
-        images = convert_from_bytes(pdf_bytes, dpi=200) # Lower DPI to save RAM on free tier
+        # Get page count first
+        from pdf2image.pdf2image import pdfinfo_from_bytes
+        info = pdfinfo_from_bytes(pdf_bytes)
+        page_count = info.get('Pages', 1)
+        
+        print(f"Processing {page_count} pages...")
         
         pages_text = []
-        for img in images:
-            txt = pytesseract.image_to_string(img, lang=LANG)
-            pages_text.append(txt)
-
+        # Process pages ONE AT A TIME to minimize memory usage
+        for page_num in range(1, page_count + 1):
+            print(f"Processing page {page_num}/{page_count}")
+            # Convert single page at a time with lower DPI
+            images = convert_from_bytes(
+                pdf_bytes, 
+                dpi=150,  # Reduced from 200 to save memory
+                first_page=page_num,
+                last_page=page_num
+            )
+            
+            # Process immediately and discard image
+            if images:
+                txt = pytesseract.image_to_string(images[0], lang=LANG)
+                pages_text.append(txt)
+                # Clear the image from memory
+                del images
+        
+        print("OCR complete, parsing voters...")
         voters = parse_pages_text(pages_text)
+        print(f"Extracted {len(voters)} voters")
         return jsonify(voters)
         
+    except MemoryError:
+        return jsonify({'error': 'PDF too large. Please try with fewer pages or smaller file.'}), 413
     except Exception as e:
-        print(e)
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 if __name__ == "__main__":
