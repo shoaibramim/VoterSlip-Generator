@@ -1,206 +1,12 @@
-import * as pdfjsLib from 'pdfjs-dist';
 import { PDFDocument, rgb, PDFFont, StandardFonts } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
-import { VoterData, TemplateConfig, PageSize, TemplateFieldLocation, GlobalVoterInfo } from '../types';
+import { VoterData, TemplateConfig, PageSize, GlobalVoterInfo } from '../types';
 import { fetchBengaliFont } from './fontLoader';
-
-// Configure PDF.js worker - using unpkg CDN with correct path
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
-
-/**
- * Interface for text item with position
- */
-interface TextItem {
-  text: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-/**
- * Cluster text items into groups based on spatial proximity
- */
-const clusterTextItems = (items: TextItem[]): TextItem[][] => {
-  if (items.length === 0) return [];
-  
-  const clusters: TextItem[][] = [];
-  const visited = new Set<number>();
-  
-  // Sort by Y position first (top to bottom), then X (left to right)
-  const sortedItems = [...items].sort((a, b) => {
-    const yDiff = b.y - a.y; // Higher Y first (PDF coordinates)
-    if (Math.abs(yDiff) > 10) return yDiff;
-    return a.x - b.x;
-  });
-  
-  const isNearby = (item1: TextItem, item2: TextItem): boolean => {
-    const xDistance = Math.abs(item1.x - item2.x);
-    const yDistance = Math.abs(item1.y - item2.y);
-    
-    // Items are in same cluster if they're within reasonable distance
-    // Typical voter card dimensions: ~200x150 points
-    return xDistance < 250 && yDistance < 200;
-  };
-  
-  for (let i = 0; i < sortedItems.length; i++) {
-    if (visited.has(i)) continue;
-    
-    const cluster: TextItem[] = [sortedItems[i]];
-    visited.add(i);
-    
-    // Find all nearby items
-    for (let j = i + 1; j < sortedItems.length; j++) {
-      if (visited.has(j)) continue;
-      
-      // Check if this item is close to any item in current cluster
-      const isInCluster = cluster.some(clusterItem => isNearby(clusterItem, sortedItems[j]));
-      
-      if (isInCluster) {
-        cluster.push(sortedItems[j]);
-        visited.add(j);
-      }
-    }
-    
-    // Only keep clusters with at least 3 text items (minimum for a voter card)
-    if (cluster.length >= 3) {
-      clusters.push(cluster);
-    }
-  }
-  
-  return clusters;
-};
-
-/**
- * Parse voter data from clustered text items
- */
-const parseVoterFromCluster = (cluster: TextItem[], boxIndex: number): VoterData | null => {
-  // Sort cluster items by Y (top to bottom), then X (left to right)
-  const sortedCluster = [...cluster].sort((a, b) => {
-    const yDiff = b.y - a.y;
-    if (Math.abs(yDiff) > 5) return yDiff;
-    return a.x - b.x;
-  });
-  
-  const texts = sortedCluster.map(item => item.text);
-  const fullText = texts.join(' ');
-  
-  // Must contain Bengali text and some digits to be a voter card
-  if (!/[\u0980-\u09FF]/.test(fullText) || !/[\d০-৯]/.test(fullText)) {
-    return null;
-  }
-  
-  let voterName = '';
-  let voterNo = '';
-  let fatherName = '';
-  let motherName = '';
-  let dob = '';
-  let profession = '';
-  let address = '';
-  
-  // Parse line by line with context awareness
-  for (let i = 0; i < texts.length; i++) {
-    const text = texts[i].trim();
-    if (!text) continue;
-    
-    const nextText = i + 1 < texts.length ? texts[i + 1].trim() : '';
-    const textLower = text.toLowerCase();
-    
-    // Voter name detection
-    if ((textLower.includes('নাম') || textLower.includes('name')) && !textLower.includes('পিতা') && !textLower.includes('মাতা')) {
-      // Next non-empty text is likely the name
-      for (let j = i + 1; j < texts.length; j++) {
-        const candidate = texts[j].trim();
-        if (candidate && candidate.length > 2 && !/^[:\-\s]+$/.test(candidate)) {
-          voterName = candidate;
-          break;
-        }
-      }
-    }
-    
-    // Voter number detection
-    if ((textLower.includes('ভোটার') || textLower.includes('voter') || textLower.includes('নং') || textLower.includes('no')) 
-        && !textLower.includes('ক্রমিক')) {
-      // Look for numbers nearby
-      for (let j = i + 1; j < Math.min(i + 3, texts.length); j++) {
-        const candidate = texts[j].trim();
-        if (/[\d০-৯]{5,}/.test(candidate)) {
-          voterNo = candidate;
-          break;
-        }
-      }
-    }
-    
-    // Father's name
-    if (textLower.includes('পিতা') || textLower.includes('father')) {
-      for (let j = i + 1; j < texts.length; j++) {
-        const candidate = texts[j].trim();
-        if (candidate && candidate.length > 2 && /[\u0980-\u09FF]/.test(candidate) && !candidate.includes('মাতা')) {
-          fatherName = candidate;
-          break;
-        }
-      }
-    }
-    
-    // Mother's name
-    if (textLower.includes('মাতা') || textLower.includes('mother')) {
-      for (let j = i + 1; j < texts.length; j++) {
-        const candidate = texts[j].trim();
-        if (candidate && candidate.length > 2 && /[\u0980-\u09FF]/.test(candidate)) {
-          motherName = candidate;
-          break;
-        }
-      }
-    }
-    
-    // Date of birth
-    if (textLower.includes('জন্ম') || textLower.includes('birth') || textLower.includes('তারিখ') || textLower.includes('date')) {
-      for (let j = i + 1; j < Math.min(i + 3, texts.length); j++) {
-        const candidate = texts[j].trim();
-        if (/[\d০-৯\/\-\.]/.test(candidate)) {
-          dob = candidate;
-          break;
-        }
-      }
-    }
-    
-    // If we haven't found a name yet and this looks like a Bengali name (not a label)
-    if (!voterName && text.length > 3 && /[\u0980-\u09FF]{3,}/.test(text)) {
-      const isLabel = textLower.includes('পিতা') || textLower.includes('মাতা') || 
-                      textLower.includes('ঠিকানা') || textLower.includes('পেশা') ||
-                      textLower.includes('জন্ম') || textLower.includes('ভোটার');
-      if (!isLabel) {
-        voterName = text;
-      }
-    }
-    
-    // If we haven't found voter number and this looks like one
-    if (!voterNo && /[\d০-৯]{7,}/.test(text)) {
-      voterNo = text;
-    }
-  }
-  
-  // Validation: Must have name AND voter number
-  if (!voterName || !voterNo) {
-    return null;
-  }
-  
-  return {
-    id: `voter_${boxIndex}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-    serial_no: boxIndex.toString(),
-    voter_name_bn: voterName,
-    voter_no_bd: voterNo,
-    father_name_bn: fatherName || 'N/A',
-    mother_name_bn: motherName || 'N/A',
-    profession_bn: profession,
-    date_of_birth_bn: dob,
-    address_bn: address,
-  };
-};
 
 /**
  * Extraction Logic
- * Calls the Hugging Face Gradio API to extract voter data using Tesseract OCR.
+ * Sends PDF to backend API which uses Tesseract OCR to extract voter data.
+ * Returns parsed JSON data from the backend.
  */
 export const extractVotersFromPDF = async (fileData: ArrayBuffer): Promise<VoterData[]> => {
   try {
@@ -311,442 +117,309 @@ export const extractVotersFromPDF = async (fileData: ArrayBuffer): Promise<Voter
   }
 };
 
-/**
- * Template Analysis
- * Scans the template PDF to find placeholder tokens like {{NAME}}
- */
-export const analyzeTemplate = async (fileData: ArrayBuffer): Promise<TemplateConfig> => {
-  try {
-    const loadingTask = pdfjsLib.getDocument({ data: fileData });
-    const pdf = await loadingTask.promise;
-    const page = await pdf.getPage(1); // Assume template is single page
-    const textContent = await page.getTextContent();
-    const viewport = page.getViewport({ scale: 1.0 });
 
-    const mappings: Record<string, TemplateFieldLocation> = {};
+
+/**
+ * Helper function to wrap text to multiple lines
+ */
+const wrapText = (text: string, font: PDFFont, fontSize: number, maxWidth: number): string[] => {
+  const words = text.split(' ');
+  const lines: string[] = [];
+  let currentLine = '';
+
+  for (const word of words) {
+    const testLine = currentLine ? `${currentLine} ${word}` : word;
+    const testWidth = font.widthOfTextAtSize(testLine, fontSize);
     
-    // Regex to find tokens {{KEY}} or {{key}}
-    const tokenRegex = /\{\{([\w_]+)\}\}/;
-
-    for (const item of textContent.items as any[]) {
-      const match = item.str.match(tokenRegex);
-      if (match) {
-        const key = match[1]; // e.g., VOTER_NAME
-        const tx = item.transform[4];
-        const ty = item.transform[5];
-        
-        mappings[key] = {
-          pageIndex: 0,
-          x: tx,
-          y: ty,
-          fontSize: item.height || 12,
-          key
-        };
-      }
+    if (testWidth > maxWidth && currentLine) {
+      lines.push(currentLine);
+      currentLine = word;
+    } else {
+      currentLine = testLine;
     }
-
-    return {
-      file: new Uint8Array(fileData),
-      name: 'Custom Template',
-      mappings,
-      width: viewport.width,
-      height: viewport.height
-    };
-  } catch (error) {
-    console.error('Template Analysis Error:', error);
-    throw new Error('Failed to analyze template PDF. Please ensure it is a valid PDF document.');
   }
-};
-
-/**
- * Helper to check if text contains Bengali characters
- */
-const hasBengaliCharacters = (text: string): boolean => {
-  // Bengali Unicode range: 0x0980 - 0x09FF
-  return /[\u0980-\u09FF]/.test(text);
-};
-
-/**
- * Helper to get font - always uses Kalpurush from assets
- */
-const getFont = async (pdfDoc: PDFDocument, requireBengali: boolean = false): Promise<PDFFont> => {
-  const fontBytes = await fetchBengaliFont();
-  if (fontBytes) {
-    pdfDoc.registerFontkit(fontkit);
-    return await pdfDoc.embedFont(fontBytes, { subset: true });
+  
+  if (currentLine) {
+    lines.push(currentLine);
   }
-  // If font fetch failed, throw error for Bengali text
-  if (requireBengali) {
-    throw new Error('Kalpurush font failed to load from assets. Please check the font file.');
-  }
-  return await pdfDoc.embedFont(StandardFonts.Helvetica);
+  
+  return lines;
 };
 
 /**
- * Generate Default Template
- * Creates a standard Bengali voter slip design in memory.
- */
-const createDefaultTemplate = async (): Promise<TemplateConfig> => {
-  const pdfDoc = await PDFDocument.create();
-  const font = await getFont(pdfDoc);
-
-  // Size: 3.5 inch x 2.8 inch (approx standard card size with more fields)
-  // 1 inch = 72 pts. 3.5 * 72 = 252, 2.8 * 72 = 201.6
-  const width = 260;
-  const height = 210;
-  const page = pdfDoc.addPage([width, height]);
-
-  // Draw Box
-  const margin = 5;
-  page.drawRectangle({
-    x: margin,
-    y: margin,
-    width: width - (margin * 2),
-    height: height - (margin * 2),
-    borderWidth: 1,
-    borderColor: rgb(0, 0, 0),
-    opacity: 0, // Transparent fill
-    borderOpacity: 1
-  });
-
-  // Header with background
-  page.drawRectangle({
-    x: margin,
-    y: height - 35,
-    width: width - (margin * 2),
-    height: 25,
-    color: rgb(0.95, 0.95, 0.98),
-  });
-  
-  page.drawText('VOTER SLIP', {
-    x: width / 2 - 35,
-    y: height - 20,
-    size: 12,
-    font,
-    color: rgb(0, 0, 0)
-  });
-
-  page.drawLine({
-    start: { x: margin + 5, y: height - 38 },
-    end: { x: width - margin - 5, y: height - 38 },
-    thickness: 1,
-    color: rgb(0.7, 0.7, 0.7),
-  });
-
-  const fontSize = 9;
-  const leftX = 12;
-  const rightX = 140; // X position for right side fields
-  let currentY = height - 52;
-  const lineHeight = 14;
-
-  const mappings: Record<string, TemplateFieldLocation> = {};
-
-  // Vote Center and Voter Area at the top
-  page.drawText('ভোট কেন্দ্র:', { 
-    x: leftX, 
-    y: currentY, 
-    size: fontSize, 
-    font, 
-    color: rgb(0.3, 0.3, 0.3) 
-  });
-  mappings['VOTE_CENTER'] = {
-    pageIndex: 0,
-    x: leftX + 60,
-    y: currentY,
-    fontSize: fontSize,
-    key: 'VOTE_CENTER'
-  };
-  currentY -= lineHeight;
-
-  page.drawText('ভোটার এলাকা:', { 
-    x: leftX, 
-    y: currentY, 
-    size: fontSize, 
-    font, 
-    color: rgb(0.3, 0.3, 0.3) 
-  });
-  mappings['VOTER_AREA'] = {
-    pageIndex: 0,
-    x: leftX + 60,
-    y: currentY,
-    fontSize: fontSize,
-    key: 'VOTER_AREA'
-  };
-  currentY -= lineHeight;
-  
-  // Add a separator line
-  currentY -= 3;
-  page.drawLine({
-    start: { x: leftX, y: currentY },
-    end: { x: width - leftX, y: currentY },
-    thickness: 0.5,
-    color: rgb(0.8, 0.8, 0.8),
-  });
-  currentY -= 10;
-  
-  // Line 1: Serial No (left) and Name (right)
-  page.drawText('ক্রমিক:', { 
-    x: leftX, 
-    y: currentY, 
-    size: fontSize - 1, 
-    font, 
-    color: rgb(0.3, 0.3, 0.3) 
-  });
-  mappings['SERIAL'] = {
-    pageIndex: 0,
-    x: leftX + 32,
-    y: currentY,
-    fontSize: fontSize,
-    key: 'SERIAL'
-  };
-  page.drawText('নাম:', { 
-    x: leftX + 55, 
-    y: currentY, 
-    size: fontSize - 1, 
-    font, 
-    color: rgb(0.3, 0.3, 0.3) 
-  });
-  mappings['NAME'] = {
-    pageIndex: 0,
-    x: leftX + 75,
-    y: currentY,
-    fontSize: fontSize + 1,
-    key: 'NAME'
-  };
-  currentY -= lineHeight;
-  
-  // Line 2: Voter No
-  page.drawText('ভোটার নং:', { 
-    x: leftX, 
-    y: currentY, 
-    size: fontSize - 1, 
-    font, 
-    color: rgb(0.3, 0.3, 0.3) 
-  });
-  mappings['NO'] = {
-    pageIndex: 0,
-    x: leftX + 48,
-    y: currentY,
-    fontSize: fontSize,
-    key: 'NO'
-  };
-  currentY -= lineHeight;
-  
-  // Line 3: Father Name
-  page.drawText('পিতা:', { 
-    x: leftX, 
-    y: currentY, 
-    size: fontSize - 1, 
-    font, 
-    color: rgb(0.3, 0.3, 0.3) 
-  });
-  mappings['FATHER'] = {
-    pageIndex: 0,
-    x: leftX + 27,
-    y: currentY,
-    fontSize: fontSize,
-    key: 'FATHER'
-  };
-  currentY -= lineHeight;
-  
-  // Line 4: Mother Name
-  page.drawText('মাতা:', { 
-    x: leftX, 
-    y: currentY, 
-    size: fontSize - 1, 
-    font, 
-    color: rgb(0.3, 0.3, 0.3) 
-  });
-  mappings['MOTHER'] = {
-    pageIndex: 0,
-    x: leftX + 27,
-    y: currentY,
-    fontSize: fontSize,
-    key: 'MOTHER'
-  };
-  currentY -= lineHeight;
-  
-  // Line 5: Profession (left) and Date of Birth (right)
-  page.drawText('পেশা:', { 
-    x: leftX, 
-    y: currentY, 
-    size: fontSize - 1, 
-    font, 
-    color: rgb(0.3, 0.3, 0.3) 
-  });
-  mappings['PROFESSION'] = {
-    pageIndex: 0,
-    x: leftX + 27,
-    y: currentY,
-    fontSize: fontSize - 1,
-    key: 'PROFESSION'
-  };
-  page.drawText('জন্ম তারিখ:', { 
-    x: rightX, 
-    y: currentY, 
-    size: fontSize - 1, 
-    font, 
-    color: rgb(0.3, 0.3, 0.3) 
-  });
-  mappings['DOB'] = {
-    pageIndex: 0,
-    x: rightX + 50,
-    y: currentY,
-    fontSize: fontSize - 1,
-    key: 'DOB'
-  };
-  currentY -= lineHeight;
-  
-  // Line 6: Address
-  page.drawText('ঠিকানা:', { 
-    x: leftX, 
-    y: currentY, 
-    size: fontSize - 1, 
-    font, 
-    color: rgb(0.3, 0.3, 0.3) 
-  });
-  mappings['ADDRESS'] = {
-    pageIndex: 0,
-    x: leftX + 35,
-    y: currentY,
-    fontSize: fontSize - 1,
-    key: 'ADDRESS'
-  };
-
-  const pdfBytes = await pdfDoc.save();
-
-  return {
-    file: pdfBytes,
-    name: 'Default Template',
-    mappings,
-    width,
-    height
-  };
-};
-
-/**
- * PDF Generation Logic
- * Creates the grid layout and embeds fonts.
+ * PDF Generation Logic with new layout system
+ * Creates voter slips with specified aspect ratio, distributed uniformly on page
  */
 export const generatePDF = async (
   voters: VoterData[],
   templateConfig: TemplateConfig | null,
   pageSize: PageSize,
+  aspectRatio: import('../types').AspectRatio,
   globalInfo: GlobalVoterInfo
 ): Promise<Uint8Array> => {
   const pdfDoc = await PDFDocument.create();
+  pdfDoc.registerFontkit(fontkit);
   
-  // Check if any voter data or global info contains Bengali text
-  const hasBengaliText = voters.some(voter => 
-    Object.values(voter).some(val => typeof val === 'string' && hasBengaliCharacters(val))
-  ) || hasBengaliCharacters(globalInfo.voteCenter || '') || hasBengaliCharacters(globalInfo.voterArea || '');
-  
-  const customFont = await getFont(pdfDoc, hasBengaliText);
-
-  // Resolve Template: Use provided or generate default
-  let templateToUse = templateConfig;
-  if (!templateToUse) {
-    templateToUse = await createDefaultTemplate();
-  }
-
-  // Load Template PDF
-  const templatePdf = await PDFDocument.load(templateToUse.file);
-  const [templatePage] = await pdfDoc.embedPdf(templatePdf, [0]); // Embed 1st page
+  // Load Bengali font with proper settings
+  const bengaliFont = await fetchBengaliFont();
+  const customFont = await pdfDoc.embedFont(bengaliFont, { subset: true });
 
   // Define Page Dimensions
   const pageDims = pageSize === 'A4' 
     ? { width: 595.28, height: 841.89 }
     : { width: 612.00, height: 1008.00 };
 
-  const GRID_COLS = 2;
-  const GRID_ROWS = 2;
-  const ITEMS_PER_PAGE = 4;
-
-  const margin = 20;
-  const availableWidth = (pageDims.width - (margin * 3)) / GRID_COLS;
-  const availableHeight = (pageDims.height - (margin * 3)) / GRID_ROWS;
+  // Calculate slip dimensions based on aspect ratio
+  const PAGE_MARGIN = 30; // Total margin for all edges
+  let slipWidth: number, slipHeight: number;
   
-  // Scale logic
-  const scaleX = availableWidth / templateToUse.width;
-  const scaleY = availableHeight / templateToUse.height;
-  const scale = Math.min(scaleX, scaleY); // Maintain aspect ratio
+  if (aspectRatio === '1:1') {
+    // Square slips: Calculate to fit 2 columns x 3 rows = 6 slips per page
+    const availableWidth = pageDims.width - (PAGE_MARGIN * 2);
+    const availableHeight = pageDims.height - (PAGE_MARGIN * 2);
+    const size = Math.min(availableWidth / 2, availableHeight / 3) - 10; // 10 for inter-slip margin
+    slipWidth = size;
+    slipHeight = size;
+  } else {
+    // 3:4 Portrait slips: Calculate to fit 2 columns x 2 rows
+    const availableWidth = pageDims.width - (PAGE_MARGIN * 2);
+    const availableHeight = pageDims.height - (PAGE_MARGIN * 2);
+    const widthPerSlip = availableWidth / 2 - 15;
+    const heightPerSlip = availableHeight / 2 - 15;
+    
+    // Maintain 3:4 aspect ratio
+    if (widthPerSlip / heightPerSlip > 3 / 4) {
+      slipHeight = heightPerSlip;
+      slipWidth = slipHeight * (3 / 4);
+    } else {
+      slipWidth = widthPerSlip;
+      slipHeight = slipWidth * (4 / 3);
+    }
+  }
 
-  const cellWidth = templateToUse.width * scale;
-  const cellHeight = templateToUse.height * scale;
+  // Calculate grid layout
+  const cols = aspectRatio === '1:1' ? 2 : 2;
+  const rows = aspectRatio === '1:1' ? 3 : 2;
+  const slipsPerPage = cols * rows;
+
+  // Calculate actual spacing for uniform distribution
+  const totalSlipsWidth = slipWidth * cols;
+  const totalSlipsHeight = slipHeight * rows;
+  const horizontalGap = (pageDims.width - totalSlipsWidth) / (cols + 1);
+  const verticalGap = (pageDims.height - totalSlipsHeight) / (rows + 1);
+
+  // Load custom template if provided
+  let templateImage: any = null;
+  if (templateConfig) {
+    if (templateConfig.fileType === 'pdf') {
+      const templatePdf = await PDFDocument.load(templateConfig.file);
+      [templateImage] = await pdfDoc.embedPdf(templatePdf, [0]);
+    } else {
+      // Image (JPG/PNG)
+      const fileType = templateConfig.name.toLowerCase();
+      if (fileType.endsWith('.jpg') || fileType.endsWith('.jpeg')) {
+        templateImage = await pdfDoc.embedJpg(templateConfig.file);
+      } else if (fileType.endsWith('.png')) {
+        templateImage = await pdfDoc.embedPng(templateConfig.file);
+      }
+    }
+  }
 
   let currentPage = pdfDoc.addPage([pageDims.width, pageDims.height]);
   
   for (let i = 0; i < voters.length; i++) {
-    if (i > 0 && i % ITEMS_PER_PAGE === 0) {
+    if (i > 0 && i % slipsPerPage === 0) {
       currentPage = pdfDoc.addPage([pageDims.width, pageDims.height]);
     }
 
-    const indexOnPage = i % ITEMS_PER_PAGE;
-    const col = indexOnPage % GRID_COLS;
-    const row = Math.floor(indexOnPage / GRID_COLS);
+    const indexOnPage = i % slipsPerPage;
+    const col = indexOnPage % cols;
+    const row = Math.floor(indexOnPage / cols);
 
-    // Calculate position (Bottom-Left origin)
-    // Row 0 is Top
-    const x = margin + (col * (cellWidth + margin));
-    const y = pageDims.height - margin - ((row + 1) * cellHeight) - (row * margin);
+    // Calculate position (Bottom-Left origin in PDF)
+    const x = horizontalGap + (col * (slipWidth + horizontalGap));
+    const y = pageDims.height - verticalGap - ((row + 1) * slipHeight) - (row * verticalGap);
 
-    // Draw the template background
-    currentPage.drawPage(templatePage, {
-      x,
-      y,
-      width: cellWidth,
-      height: cellHeight,
-    });
+    // Draw template background or grey default
+    if (templateImage) {
+      if (templateConfig?.fileType === 'pdf') {
+        currentPage.drawPage(templateImage, { x, y, width: slipWidth, height: slipHeight });
+      } else {
+        currentPage.drawImage(templateImage, { x, y, width: slipWidth, height: slipHeight });
+      }
+    } else {
+      currentPage.drawRectangle({
+        x, y,
+        width: slipWidth,
+        height: slipHeight,
+        color: rgb(0.85, 0.85, 0.85),
+      });
+    }
 
-    // Draw Data Fields
-    const voter = voters[i];
+    // Layout calculations based on template height
+    const TOP_RESERVED = slipHeight * 0.40;
+    const BOX1_HEIGHT = slipHeight * 0.15;
+    const GAP_HEIGHT = slipHeight * 0.025;
+    const BOX2_HEIGHT = slipHeight * 0.35;
+    const HORIZONTAL_MARGIN = slipWidth * 0.025;
+
+    const box1Y = y + slipHeight - TOP_RESERVED - BOX1_HEIGHT;
+    const box2Y = box1Y - GAP_HEIGHT - BOX2_HEIGHT;
+
+    const boxWidth = slipWidth - (HORIZONTAL_MARGIN * 2);
+    const boxX = x + HORIZONTAL_MARGIN;
+    const commonFontSize = Math.min(10, BOX2_HEIGHT / 9);
+    const box1Padding = 6;
+    const box2Padding = 6;
+    const lineHeight = commonFontSize + 3;
     
-    // Map data keys to template keys (including global info)
-    const dataMap: Record<string, string | undefined> = {
-      'SERIAL': voter.serial_no,
-      'NAME': voter.voter_name_bn,
-      'NO': voter.voter_no_bd,
-      'FATHER': voter.father_name_bn,
-      'MOTHER': voter.mother_name_bn,
-      'DOB': voter.date_of_birth_bn,
-      'PROFESSION': voter.profession_bn,
-      'ADDRESS': voter.address_bn,
-      'VOTE_CENTER': globalInfo.voteCenter,
-      'vote_center': globalInfo.voteCenter,
-      'VOTER_AREA': globalInfo.voterArea,
-      'voter_area': globalInfo.voterArea,
-      'CENTER': globalInfo.voteCenter,
-      'AREA': globalInfo.voterArea
+    const voter = voters[i];
+
+    // Helper function to draw rounded rectangle
+    const drawRoundedRect = (x: number, y: number, width: number, height: number, radius: number) => {
+      // Draw main rectangle body (without corners)
+      currentPage.drawRectangle({
+        x: x + radius,
+        y: y,
+        width: width - (radius * 2),
+        height: height,
+        color: rgb(1, 1, 1),
+        borderWidth: 0,
+      });
+      currentPage.drawRectangle({
+        x: x,
+        y: y + radius,
+        width: width,
+        height: height - (radius * 2),
+        color: rgb(1, 1, 1),
+        borderWidth: 0,
+      });
+      
+      // Draw corner circles
+      const corners = [
+        { x: x + radius, y: y + height - radius }, // Top-left
+        { x: x + width - radius, y: y + height - radius }, // Top-right
+        { x: x + radius, y: y + radius }, // Bottom-left
+        { x: x + width - radius, y: y + radius }, // Bottom-right
+      ];
+      corners.forEach(corner => {
+        currentPage.drawCircle({
+          x: corner.x,
+          y: corner.y,
+          size: radius,
+          color: rgb(1, 1, 1),
+          borderWidth: 0,
+        });
+      });
     };
 
-    // Iterate through identified mappings in the template
-    Object.entries(templateToUse.mappings).forEach(([key, location]) => {
-      // Direct match first, then fuzzy match
-      const normalizedKey = key.toUpperCase().replace(/[_-]/g, '');
-      let text = dataMap[key] || '';
-      
-      // If no direct match, try fuzzy matching
-      if (!text) {
-        const dataKey = Object.keys(dataMap).find(k => {
-          const normalizedDataKey = k.toUpperCase().replace(/[_-]/g, '');
-          return normalizedKey.includes(normalizedDataKey) || normalizedDataKey.includes(normalizedKey);
-        });
-        text = dataKey ? dataMap[dataKey] || '' : '';
-      }
+    // Draw First Rectangle Box (Vote Center & Area)
+    const cornerRadius = 6;
+    drawRoundedRect(boxX, box1Y, boxWidth, BOX1_HEIGHT, cornerRadius);
 
-      if (text) {
-        const drawX = x + (location.x * scale);
-        const drawY = y + (location.y * scale);
+    // Text inside Box 1
+    let box1TextY = box1Y + BOX1_HEIGHT - box1Padding - commonFontSize;
 
-        currentPage.drawText(text, {
-          x: drawX,
-          y: drawY,
-          size: (location.fontSize || 10) * scale,
+    if (globalInfo.voteCenter) {
+      const centerLines = wrapText(`কেন্দ্র: ${globalInfo.voteCenter}`, customFont, commonFontSize, boxWidth - (box1Padding * 2));
+      for (let line of centerLines.slice(0, 2)) {
+        currentPage.drawText(line, {
+          x: boxX + box1Padding,
+          y: box1TextY,
+          size: commonFontSize,
           font: customFont,
-          color: rgb(0, 0, 0),
+          color: rgb(0.2, 0.2, 0.2),
         });
+        box1TextY -= commonFontSize + 2;
       }
+    }
+
+    if (globalInfo.voterArea) {
+      const areaLines = wrapText(`এলাকা: ${globalInfo.voterArea}`, customFont, commonFontSize, boxWidth - (box1Padding * 2));
+      for (let line of areaLines.slice(0, 2)) {
+        currentPage.drawText(line, {
+          x: boxX + box1Padding,
+          y: box1TextY,
+          size: commonFontSize,
+          font: customFont,
+          color: rgb(0.2, 0.2, 0.2),
+        });
+        box1TextY -= commonFontSize + 2;
+      }
+    }
+
+    // Draw Second Rectangle Box (Voter Info)
+    drawRoundedRect(boxX, box2Y, boxWidth, BOX2_HEIGHT, cornerRadius);
+
+    // Text inside Box 2 - Voter Info
+    let box2TextY = box2Y + BOX2_HEIGHT - box2Padding - commonFontSize;
+
+    // Line 1: Serial + Name
+    const line1 = `${voter.serial_no}. ${voter.voter_name_bn}`;
+    currentPage.drawText(line1, {
+      x: boxX + box2Padding,
+      y: box2TextY,
+      size: commonFontSize,
+      font: customFont,
+      color: rgb(0, 0, 0),
     });
+    box2TextY -= lineHeight;
+
+    // Line 2: Voter No
+    currentPage.drawText(voter.voter_no_bd, {
+      x: boxX + box2Padding,
+      y: box2TextY,
+      size: commonFontSize,
+      font: customFont,
+      color: rgb(0.2, 0.2, 0.2),
+    });
+    box2TextY -= lineHeight;
+
+    // Line 3: Father
+    currentPage.drawText(`পিতা: ${voter.father_name_bn}`, {
+      x: boxX + box2Padding,
+      y: box2TextY,
+      size: commonFontSize,
+      font: customFont,
+      color: rgb(0.2, 0.2, 0.2),
+    });
+    box2TextY -= lineHeight;
+
+    // Line 4: Mother
+    currentPage.drawText(`মাতা: ${voter.mother_name_bn}`, {
+      x: boxX + box2Padding,
+      y: box2TextY,
+      size: commonFontSize,
+      font: customFont,
+      color: rgb(0.2, 0.2, 0.2),
+    });
+    box2TextY -= lineHeight;
+
+    // Line 5: Profession + DOB
+    const line5 = `${voter.profession_bn || 'N/A'} | ${voter.date_of_birth_bn || 'N/A'}`;
+    currentPage.drawText(line5, {
+      x: boxX + box2Padding,
+      y: box2TextY,
+      size: commonFontSize,
+      font: customFont,
+      color: rgb(0.2, 0.2, 0.2),
+    });
+    box2TextY -= lineHeight;
+
+    // Line 6: Address (max 2 lines)
+    if (voter.address_bn && voter.address_bn !== 'N/A') {
+      const addressLines = wrapText(voter.address_bn, customFont, commonFontSize, boxWidth - (box2Padding * 2));
+      for (let line of addressLines.slice(0, 2)) {
+        currentPage.drawText(line, {
+          x: boxX + box2Padding,
+          y: box2TextY,
+          size: commonFontSize,
+          font: customFont,
+          color: rgb(0.3, 0.3, 0.3),
+        });
+        box2TextY -= lineHeight - 1;
+      }
+    }
   }
 
   return pdfDoc.save();

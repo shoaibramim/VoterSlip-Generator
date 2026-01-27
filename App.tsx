@@ -3,7 +3,7 @@ import { Sun, Moon, Upload, FileText, Download, Users, RefreshCw, MapPin, Buildi
 import { extractVotersFromPDF, generatePDF } from './services/pdfProcessor';
 import { Toast } from './components/ui/Toast';
 import { TemplateUploader } from './components/TemplateUploader';
-import { VoterData, TemplateConfig, PageSize } from './types';
+import { VoterData, TemplateConfig, PageSize, AspectRatio } from './types';
 import { translations, Language } from './i18n/translations';
 
 // Mock data for demo purposes - Always in Bengali
@@ -12,45 +12,45 @@ const MOCK_VOTERS: VoterData[] = [
     id: '1',
     serial_no: '০০১',
     voter_name_bn: 'আবদুর রহিম',
-    voter_no_bd: '১৯৮৭৬৫৪৩২১০০১',
-    father_name_bn: 'করিম শেখ',
+    voter_no_bd: '১৯৮৭৬৫৪৩২০০০১',
+    father_name_bn: 'নুরুল ইসলাম',
     mother_name_bn: 'রাহেলা বেগম',
     date_of_birth_bn: '০১-০১-১৯৮০',
     profession_bn: 'কৃষক',
-    address_bn: 'গ্রাম: সোনাতলা, পোস্ট: বগুড়া'
+    address_bn: 'গ্রাম: পশ্চিম পাড়া, কাউয়ারখোপ, রামু'
   },
   {
     id: '2',
     serial_no: '০০২',
     voter_name_bn: 'ফাতেমা খাতুন',
-    voter_no_bd: '১৯৯০১২৩৪৫৬০০২',
+    voter_no_bd: '১৯৯০১২৩৪৫০০০২',
     father_name_bn: 'স্বর্গীয় আবদুল জব্বার',
     mother_name_bn: 'নূরজাহান বিবি',
     date_of_birth_bn: '১৫-০৫-১৯৯০',
     profession_bn: 'গৃহিণী',
-    address_bn: 'গ্রাম: সোনাতলা, পোস্ট: বগুড়া'
+    address_bn: 'গ্রাম: পশ্চিম পাড়া, কাউয়ারখোপ, রামু'
   },
   {
     id: '3',
     serial_no: '০০৩',
     voter_name_bn: 'মো. রফিকুল ইসলাম',
-    voter_no_bd: '১৯৮৫৪৪৩৩২২০০৩',
+    voter_no_bd: '১৯৮৫৪৪৩৩২০০০৩',
     father_name_bn: 'আজিজুর রহমান',
     mother_name_bn: 'সালেহা খাতুন',
     date_of_birth_bn: '১০-১০-১৯৮৫',
     profession_bn: 'শিক্ষক',
-    address_bn: 'গ্রাম: ধুনট, পোস্ট: শেরপুর'
+    address_bn: 'গ্রাম: ধুফুলনির চর, কাউয়ারখোপ, রামু'
   },
   {
     id: '4',
     serial_no: '০০৪',
     voter_name_bn: 'মোসাম্মৎ আয়েশা',
-    voter_no_bd: '২০০০৭৭৮৮৯৯০০৪',
+    voter_no_bd: '২০০০৭৭৮৮৯০০০৪',
     father_name_bn: 'আবুল কালাম',
     mother_name_bn: 'ফরিদা ইয়াসমিন',
     date_of_birth_bn: '২০-১২-২০০০',
     profession_bn: 'শিক্ষার্থী',
-    address_bn: 'গ্রাম: ধুনট, পোস্ট: শেরপুর'
+    address_bn: 'গ্রাম: কাউয়ারখোপ, রামু, কক্সবাজার'
   }
 ];
 
@@ -59,6 +59,7 @@ function App() {
   const [language, setLanguage] = useState<Language>('en');
   const [voters, setVoters] = useState<VoterData[]>([]);
   const [template, setTemplate] = useState<TemplateConfig | null>(null);
+  const [aspectRatio, setAspectRatio] = useState<AspectRatio>('3:4');
   const [pageSize, setPageSize] = useState<PageSize>('A4');
   const [isProcessingUpload, setIsProcessingUpload] = useState(false);
   const [isProcessingGenerate, setIsProcessingGenerate] = useState(false);
@@ -70,6 +71,7 @@ function App() {
   const [voteCenter, setVoteCenter] = useState('');
   const [voterArea, setVoterArea] = useState('');
   const [selectedVoterFile, setSelectedVoterFile] = useState<File | null>(null);
+  const [showJsonHelper, setShowJsonHelper] = useState(false);
 
   // Get current translations
   const t = translations[language];
@@ -139,10 +141,80 @@ function App() {
     setVoters([...MOCK_VOTERS, ...MOCK_VOTERS, ...MOCK_VOTERS]); // Load 12 items to show multiple pages
     showToast(t.sampleDataLoaded);
     // Pre-fill with Bengali data for better demo
-    setVoteCenter('সোনাতলা উচ্চ বিদ্যালয়');
+    setVoteCenter('কাউয়ারখোপ হাকিম রকিমা উচ্চ বিদ্যালয়');
     setVoterArea('ওয়ার্ড নং ৫');
   };
+  // Handle JSON File Upload
+  const handleJsonUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
+    // Show helper text when file is selected
+    setShowJsonHelper(true);
+
+    try {
+      const text = await file.text();
+      const jsonData = JSON.parse(text);
+      
+      // Validate that it's an array
+      if (!Array.isArray(jsonData)) {
+        showToast(language === 'en' ? 'Invalid JSON format. Expected an array of voter data.' : 'অবৈধ JSON ফরম্যাট। ভোটার ডেটার একটি অ্যারে প্রত্যাশিত।', 'error');
+        return;
+      }
+
+      // Basic validation of required fields (id is optional, will be auto-generated)
+      const requiredFields = ['serial_no', 'voter_name_bn', 'voter_no_bd', 'father_name_bn', 'mother_name_bn'];
+      const isValid = jsonData.every((item: any) => 
+        requiredFields.every(field => field in item)
+      );
+
+      if (!isValid) {
+        showToast(language === 'en' ? 'Invalid JSON structure. Missing required fields.' : 'অবৈধ JSON কাঠামো। প্রয়োজনীয় ক্ষেত্র অনুপস্থিত।', 'error');
+        return;
+      }
+
+      // Add id field if missing
+      const processedData = jsonData.map((item: any, index: number) => ({
+        id: item.id || `json_${index + 1}`,
+        ...item
+      }));
+
+      setVoters(processedData as VoterData[]);
+      showToast(`${processedData.length} ${t.votersExtracted}`);
+      
+      // Scroll to data preview section for better UX
+      setTimeout(() => {
+        document.querySelector('[data-section="data-preview"]')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }, 300);
+    } catch (err) {
+      console.error(err);
+      showToast(language === 'en' ? 'Failed to parse JSON file. Please check the file format.' : 'JSON ফাইল পার্স করতে ব্যর্থ। ফাইল ফরম্যাট পরীক্ষা করুন।', 'error');
+    } finally {
+      // Reset file input
+      e.target.value = '';
+    }
+  };
+
+  // Download JSON Data
+  const downloadJsonData = () => {
+    if (voters.length === 0) {
+      showToast(t.noVoterData, 'error');
+      return;
+    }
+
+    const jsonStr = JSON.stringify(voters, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `voter_data_${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    
+    showToast(language === 'en' ? 'JSON file downloaded successfully!' : 'JSON ফাইল সফলভাবে ডাউনলোড হয়েছে!', 'success');
+  };
   // Step 3: Generate PDF
   const handleGenerate = async () => {
     if (voters.length === 0) {
@@ -164,6 +236,7 @@ function App() {
         voters, 
         template, 
         pageSize,
+        aspectRatio,
         { voteCenter, voterArea }
       );
       
@@ -199,6 +272,7 @@ function App() {
   const handleReset = () => {
     setVoters([]);
     setTemplate(null);
+    setAspectRatio('3:4');
     setVoteCenter('');
     setVoterArea('');
     setSelectedVoterFile(null);
@@ -211,7 +285,7 @@ function App() {
         
         {/* Header */}
         <header className="sticky top-0 z-30 w-full border-b border-gray-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+          <div className="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <FileText className="text-accent h-6 w-6" />
               <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-cyan-500 bg-clip-text text-transparent">
@@ -238,7 +312,7 @@ function App() {
         </header>
 
         {/* Main Content */}
-        <main className="flex-1 w-full max-w-5xl mx-auto p-4 sm:p-6 lg:p-8 space-y-8">
+        <main className="flex-1 w-full max-w-[1800px] mx-auto p-4 sm:p-6 lg:p-8 space-y-8">
           
           <div className="grid md:grid-cols-2 gap-8">
             {/* Left Column: Inputs */}
@@ -304,21 +378,71 @@ function App() {
                     </div>
                   </div>
 
-                  <button 
-                    onClick={loadMockData}
-                    className="w-full py-2.5 rounded-lg border border-gray-300 dark:border-slate-700 text-sm font-medium hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
-                  >
-                    {t.loadSampleData}
-                  </button>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button 
+                      onClick={loadMockData}
+                      className="py-2.5 rounded-lg border border-gray-300 dark:border-slate-700 text-sm font-medium hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
+                    >
+                      {t.loadSampleData}
+                    </button>
+                    
+                    <label className="py-2.5 rounded-lg border border-gray-300 dark:border-slate-700 text-sm font-medium hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors cursor-pointer text-center">
+                      <input
+                        type="file"
+                        accept=".json"
+                        onChange={handleJsonUpload}
+                        className="hidden"
+                      />
+                      {language === 'en' ? 'Upload JSON' : 'JSON আপলোড'}
+                    </label>
+                  </div>
+
+                  {showJsonHelper && (
+                    <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800 rounded-lg animate-fade-in">
+                      <div className="flex justify-between items-start mb-1">
+                        <p className="text-xs font-medium text-blue-800 dark:text-blue-300">
+                          {language === 'en' ? 'JSON Structure:' : 'JSON কাঠামো:'}
+                        </p>
+                        <button 
+                          onClick={() => setShowJsonHelper(false)}
+                          className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                      <pre className="text-[10px] text-blue-700 dark:text-blue-400 overflow-x-auto">
+{`[
+  {
+    id: string (optional),
+    serial_no: string (required),
+    voter_name_bn: string (required),
+    voter_no_bd: string (required),
+    father_name_bn: string (required),
+    mother_name_bn: string (required),
+    profession_bn: string (optional),
+    date_of_birth_bn: string (optional),
+    address_bn: string (optional)
+  }
+]`}
+                      </pre>
+                    </div>
+                  )}
                 </div>
               </section>
 
                {/* Step 2: Global Info */}
                <section className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800 p-6">
-                 <h2 className="text-lg font-semibold flex items-center gap-2 mb-4">
-                    <span className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-600 text-xs font-bold">2</span>
-                    {t.step2}
-                  </h2>
+                 <div className="flex justify-between items-center mb-4">
+                   <h2 className="text-lg font-semibold flex items-center gap-2">
+                      <span className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-600 text-xs font-bold">2</span>
+                      {t.step2}
+                    </h2>
+                    <span className="text-xs font-medium px-2 py-1 bg-gray-100 dark:bg-slate-800 rounded text-gray-500">
+                      {t.optional}
+                    </span>
+                  </div>
                   <div className="space-y-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -388,12 +512,14 @@ function App() {
                         </button>
                       </div>
                       <div className="mt-2 text-xs text-gray-500">
-                         {t.placeholderSupport} <code className="bg-gray-100 dark:bg-slate-800 px-1 rounded">{"{{vote_center}}"}</code>, <code className="bg-gray-100 dark:bg-slate-800 px-1 rounded">{"{{voter_area}}"}</code>
+                         {t.placeholderSupport} <code className="bg-gray-100 dark:bg-slate-800 px-1 rounded">{"PDF"}</code>, <code className="bg-gray-100 dark:bg-slate-800 px-1 rounded">{"JPG"}</code>, <code className="bg-gray-100 dark:bg-slate-800 px-1 rounded">{"PNG"}</code>
                       </div>
                     </div>
                   )}
 
-                  <TemplateUploader 
+                  <TemplateUploader
+                    aspectRatio={aspectRatio}
+                    onAspectRatioChange={setAspectRatio}
                     onTemplateLoaded={setTemplate} 
                     onError={(msg) => showToast(msg, 'error')}
                     clickToUploadText={t.clickToUpload}
@@ -406,11 +532,22 @@ function App() {
             <div className="flex flex-col gap-6">
               
               {/* Data Preview with constrained height */}
-              <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800 p-6 flex flex-col">
-                <h2 className="text-lg font-semibold mb-4">{t.dataPreview}</h2>
+              <div data-section="data-preview" className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800 p-6 flex flex-col">
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-lg font-semibold">{t.dataPreview}</h2>
+                  {voters.length > 0 && (
+                    <button 
+                      onClick={downloadJsonData}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors border border-blue-200 dark:border-blue-800"
+                    >
+                      <Download size={14} />
+                      {language === 'en' ? 'Download JSON' : 'JSON ডাউনলোড'}
+                    </button>
+                  )}
+                </div>
                 
                 {voters.length > 0 ? (
-                  <div className="overflow-auto min-h-[580px] max-h-[730px] space-y-3 pr-2 scrollbar-thin scrollbar-thumb-gray-200 dark:scrollbar-thumb-slate-700">
+                  <div className="overflow-auto min-h-[730px] max-h-[730px] space-y-3 pr-2 scrollbar-thin scrollbar-thumb-gray-200 dark:scrollbar-thumb-slate-700">
                     {voters.map((voter, idx) => (
                       <div key={idx} className="p-4 rounded-lg border border-gray-100 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-800/30">
                         <div className="flex justify-between items-start mb-2">
@@ -440,7 +577,7 @@ function App() {
                     ))}
                   </div>
                 ) : (
-                  <div className="flex flex-col items-center justify-center min-h-[580px] max-h-[730px] text-gray-400 text-center p-8 border-2 border-dashed border-gray-100 dark:border-slate-800 rounded-xl min-h-[200px]">
+                  <div className="flex flex-col items-center justify-center min-h-[730px] max-h-[730px] text-gray-400 text-center p-8 border-2 border-dashed border-gray-100 dark:border-slate-800 rounded-xl min-h-[200px]">
                     <Users size={48} className="mb-3 opacity-20" />
                     <p>{t.noDataYet}</p>
                     <p className="text-sm mt-1">{t.uploadOrLoad}</p>
@@ -497,7 +634,7 @@ function App() {
 
         {/* Footer */}
         <footer className="w-full border-t border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 py-6 mt-auto">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8">
             <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
               <p className="text-sm text-gray-600 dark:text-gray-400">
                 © {new Date().getFullYear()} {t.appTitle}. All rights reserved.

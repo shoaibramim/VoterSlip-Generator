@@ -30,7 +30,7 @@ export const translations = {
     dataPreview: 'Data Preview',
     
     // Placeholders
-    voteCenterPlaceholder: 'e.g. সোনাতলা হাই স্কুল',
+    voteCenterPlaceholder: 'e.g. কাউয়ারখোপ হাকিম রকিমা উচ্চ বিদ্যালয়',
     voterAreaPlaceholder: 'e.g. ওয়ার্ড নং ৫',
     
     // Messages
@@ -42,11 +42,11 @@ export const translations = {
     bengaliFontLoaded: '✓ Custom Bengali Font Loaded',
     uploadBengaliFont: 'Upload Custom Bengali Font',
     fontRecommendation: 'Default: Kalpurush (from assets). You can upload: Noto Sans Bengali, etc.',
-    clickToUpload: 'Click to upload PDF Template',
-    templateMarkers: 'Must contain markers like {{NAME}}, {{SERIAL}}',
+    clickToUpload: 'Click to upload Template',
+    templateMarkers: 'Supports JPG, PNG, or PDF format',
     noDataYet: 'No extracted data yet.',
     uploadOrLoad: 'Upload a PDF or load sample data to preview.',
-    placeholderSupport: 'Supported placeholders:',
+    placeholderSupport: 'Supported formats:',
     
     // Page sizes
     a4Paper: 'A4 Paper',
@@ -98,7 +98,7 @@ export const translations = {
     dataPreview: 'ডেটা প্রিভিউ',
     
     // Placeholders
-    voteCenterPlaceholder: 'যেমন: সোনাতলা হাই স্কুল',
+    voteCenterPlaceholder: 'যেমন: কাউয়ারখোপ হাকিম রকিমা উচ্চ বিদ্যালয়',
     voterAreaPlaceholder: 'যেমন: ওয়ার্ড নং ৫',
     
     // Messages
@@ -110,11 +110,11 @@ export const translations = {
     bengaliFontLoaded: '✓ কাস্টম বাংলা ফন্ট লোড হয়েছে',
     uploadBengaliFont: 'কাস্টম বাংলা ফন্ট আপলোড করুন',
     fontRecommendation: 'ডিফল্ট: কালপুরুষ (অ্যাসেট থেকে)। আপনি আপলোড করতে পারেন: নোটো সান্স বাংলা, ইত্যাদি।',
-    clickToUpload: 'PDF টেমপ্লেট আপলোড করতে ক্লিক করুন',
-    templateMarkers: 'অবশ্যই {{NAME}}, {{SERIAL}} এর মত মার্কার থাকতে হবে',
+    clickToUpload: 'টেমপ্লেট আপলোড করতে ক্লিক করুন',
+    templateMarkers: 'JPG, PNG, অথবা PDF ফরম্যাট সমর্থিত',
     noDataYet: 'এখনো কোন ডেটা নিষ্কাশিত হয়নি।',
     uploadOrLoad: 'প্রিভিউ করতে একটি PDF আপলোড করুন বা নমুনা ডেটা লোড করুন।',
-    placeholderSupport: 'সমর্থিত প্লেসহোল্ডার:',
+    placeholderSupport: 'সমর্থিত ফরম্যাট সমূহ:',
     
     // Page sizes
     a4Paper: 'A4 কাগজ',

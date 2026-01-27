@@ -22,18 +22,13 @@ export interface ProcessingStatus {
 
 export type PageSize = 'A4' | 'Legal';
 
-export interface TemplateFieldLocation {
-  pageIndex: number;
-  x: number;
-  y: number;
-  fontSize: number;
-  key: string;
-}
+export type AspectRatio = '1:1' | '3:4';
 
 export interface TemplateConfig {
   file: Uint8Array;
   name: string;
-  mappings: Record<string, TemplateFieldLocation>;
+  fileType: 'pdf' | 'image'; // jpg, png are treated as image
+  aspectRatio: AspectRatio;
   width: number;
   height: number;
 }
