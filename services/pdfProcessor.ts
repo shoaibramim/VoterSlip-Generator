@@ -355,7 +355,7 @@ export const generatePDF = async (
     let box2TextY = box2Y + BOX2_HEIGHT - box2Padding - commonFontSize;
 
     // Line 1: Serial + Name
-    const line1 = `${voter.serial_no}. ${voter.voter_name_bn}`;
+    const line1 = `${voter.serial_no}. নাম: ${voter.voter_name_bn}`;
     currentPage.drawText(line1, {
       x: boxX + box2Padding,
       y: box2TextY,
@@ -366,7 +366,7 @@ export const generatePDF = async (
     box2TextY -= lineHeight;
 
     // Line 2: Voter No
-    currentPage.drawText(voter.voter_no_bd, {
+    currentPage.drawText(`ভোটার নং: ${voter.voter_no_bd}`, {
       x: boxX + box2Padding,
       y: box2TextY,
       size: commonFontSize,
@@ -396,7 +396,7 @@ export const generatePDF = async (
     box2TextY -= lineHeight;
 
     // Line 5: Profession + DOB
-    const line5 = `${voter.profession_bn || 'N/A'} | ${voter.date_of_birth_bn || 'N/A'}`;
+    const line5 = `পেশা: ${voter.profession_bn || 'N/A'} , জন্ম তারিখ: ${voter.date_of_birth_bn || 'N/A'}`;
     currentPage.drawText(line5, {
       x: boxX + box2Padding,
       y: box2TextY,
@@ -408,14 +408,14 @@ export const generatePDF = async (
 
     // Line 6: Address (max 2 lines)
     if (voter.address_bn && voter.address_bn !== 'N/A') {
-      const addressLines = wrapText(voter.address_bn, customFont, commonFontSize, boxWidth - (box2Padding * 2));
+      const addressLines = wrapText(`ঠিকানা: ${voter.address_bn}`, customFont, commonFontSize, boxWidth - (box2Padding * 2));
       for (let line of addressLines.slice(0, 2)) {
         currentPage.drawText(line, {
           x: boxX + box2Padding,
           y: box2TextY,
           size: commonFontSize,
           font: customFont,
-          color: rgb(0.3, 0.3, 0.3),
+          color: rgb(0.2, 0.2, 0.2),
         });
         box2TextY -= lineHeight - 1;
       }
