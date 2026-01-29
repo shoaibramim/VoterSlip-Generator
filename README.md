@@ -251,7 +251,7 @@ Each slip contains:
    
    Create `.env.local` in the root directory:
    ```env
-   VITE_API_URL=https://huggingface.co/spaces/shoaibramim/voterslip-backend
+   VITE_API_URL=shoaibramim/voterslip-backend  # Or link to your backend repository.
    ```
 
 4. **Run the development server**
@@ -261,7 +261,7 @@ Each slip contains:
 
 5. **Open your browser**
    ```
-   http://localhost:5173
+   http://localhost:5173 or http://localhost:6000
    ```
 
 ### Build for Production
