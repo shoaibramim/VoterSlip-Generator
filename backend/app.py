@@ -1,219 +1,215 @@
 import gradio as gr
-from pdf2image import convert_from_bytes
+from ultralytics import YOLO
+import cv2
+import numpy as np
+from PIL import Image
 import pytesseract
+from pdf2image import convert_from_bytes
 import re
 import json
+import torch
 
-# -------------------- CONFIG --------------------
+# -------------------- CONFIGURATION --------------------
+
 pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
-LANG = "ben+eng"
-PSM = "--psm 6"
 
-GARBAGE_TOKENS = [
-    "ই ac", "হয়েছে", "oor", "Fae", "|", "||",
-    "ফরম-", "ছবি ছাড়া", "চূড়ান্ত ভোটার", "ভোটার এলাকার",
-    "ডাকঘর", "পোষ্টকোড"
-]
+# Load YOLOv8 model (upload best.pt to HuggingFace repo)
+MODEL_PATH = "best.pt"
+model = YOLO(MODEL_PATH)
 
-# -------------------- UTILITIES --------------------
-def clean_text(t):
-    for g in GARBAGE_TOKENS:
-        t = t.replace(g, "")
-    return re.sub(r"\s+", " ", t).strip()
+# Set to CPU mode for HuggingFace free tier
+model.to('cpu')
 
-def is_page_number_line(line):
-    """Detect standalone page numbers like: ১, ২৩, ৯৯"""
-    return bool(re.fullmatch(r"[০-৯]{1,2}", line.strip()))
+CONF_THRESHOLD = 0.25
+IOU_THRESHOLD = 0.45
 
-def split_row_by_field(row, field):
-    return [x.strip() for x in row.split(field) if x.strip()]
+# -------------------- HELPER FUNCTIONS --------------------
 
-# -------------------- VALIDATION --------------------
-def is_valid(v):
-    return bool(v["serial_no"] and v["voter_name_bn"] and v["voter_no_bd"])
+def filter_similar_boxes(boxes, tolerance=0.15):
+    '''Filter boxes to keep only similar sized ones'''
+    if len(boxes) == 0:
+        return boxes
+    
+    # Calculate areas
+    areas = [(box[2] - box[0]) * (box[3] - box[1]) for box in boxes]
+    median_area = np.median(areas)
+    
+    # Keep boxes within tolerance of median area
+    filtered = []
+    for box, area in zip(boxes, areas):
+        if abs(area - median_area) / median_area <= tolerance:
+            filtered.append(box)
+    
+    return filtered
 
-# -------------------- MAIN PARSER --------------------
-def parse_pages(pages):
-    voters = []
-    current = []
+def extract_text_from_crop(crop_img):
+    '''Extract Bengali text using Tesseract'''
+    # Preprocess
+    gray = cv2.cvtColor(crop_img, cv2.COLOR_RGB2GRAY)
+    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    
+    # OCR
+    text = pytesseract.image_to_string(binary, lang='ben+eng', config='--psm 6')
+    return text
 
-    for page in pages:
-        lines = []
-        for l in page.splitlines():
-            l = clean_text(l)
-            if not l:
-                continue
-            if is_page_number_line(l):
-                continue
-            lines.append(l)
+def parse_voter_info(text):
+    """
+    Parse structured voter information from OCR text
+    """
+    
+    voter = {
+        "id": "",
+        "serial_no": "",
+        "voter_name_bn": "",
+        "voter_no_bd": "",
+        "father_name_bn": "N/A",
+        "mother_name_bn": "N/A",
+        "profession_bn": "N/A",
+        "date_of_birth_bn": "N/A",
+        "address_bn": "N/A"
+    }
+    
+    # Serial number
+    serial_match = re.search(r'([০-৯\d]+)\.\s*নাম[:：]', text)
+    if serial_match:
+        serial = serial_match.group(1)
+        voter['serial_no'] = serial
+        voter['id'] = f"voter_{serial}"
+    
+    # Voter name
+    name_match = re.search(r'নাম[:：]\s*(.+?)(?=\n|ভোটার|$)', text)
+    if name_match:
+        voter['voter_name_bn'] = name_match.group(1).strip(' ।.,')
+    
+    # Voter number (10-15 digits)
+    voter_no_match = re.search(r'ভোটার\s*নং[:：\.]?\s*([০-৯\d\s]{10,})', text)
+    if voter_no_match:
+        voter_no = voter_no_match.group(1).replace(' ', '')
+        voter['voter_no_bd'] = voter_no
+    
+    # Father's name
+    father_match = re.search(r'পিতা[:：]\s*(.+?)(?=\n|মাতা|$)', text)
+    if father_match:
+        voter['father_name_bn'] = father_match.group(1).strip(' ।.,')
+    
+    # Mother's name
+    mother_match = re.search(r'মাতা[:：]\s*(.+?)(?=\n|পেশা|ভোটার|$)', text)
+    if mother_match:
+        voter['mother_name_bn'] = mother_match.group(1).strip(' ।.,')
+    
+    # Profession
+    prof_match = re.search(r'পেশা[:：]\s*(.+?)(?=,|জন্ম|তারিখ|\n|$)', text)
+    if prof_match:
+        voter['profession_bn'] = prof_match.group(1).strip(' .,')
+    
+    # Date of birth (DD/MM/YYYY format)
+    dob_match = re.search(r'তারিখ[:：]?\s*([০-৯\d]{1,2}[\/\-][০-৯\d]{1,2}[\/\-][০-৯\d]{4})', text)
+    if dob_match:
+        voter['date_of_birth_bn'] = dob_match.group(1)
+    
+    # Address
+    addr_match = re.search(r'ঠিকানা[:：]\s*(.+?)(?=$)', text, re.DOTALL)
+    if addr_match:
+        address = addr_match.group(1).strip()
+        address = re.sub(r'\s+', ' ', address)
+        address = address.strip(' .,')
+        voter['address_bn'] = address
+    
+    return voter
 
-        i = 0
-        while i < len(lines):
-            line = lines[i]
+def is_valid_voter(voter):
+    '''Check if voter has minimum required fields'''
+    return bool(voter['voter_name_bn'] and voter['voter_no_bd'] and len(voter['voter_no_bd']) >= 10)
 
-            # -------- NAME ROW --------
-            if "নাম:" in line and re.search(r"[০-৯]+\. নাম:", line):
-                voters.extend([v for v in current if is_valid(v)])
-                current = []
+# -------------------- MAIN PROCESSING --------------------
 
-                names = re.findall(r"([০-৯]+)\.\s*নাম:\s*([^০-৯]+)", line)
-                for serial, name in names:
-                    current.append({
-                        "id": f"voter_{serial}",
-                        "serial_no": serial,
-                        "voter_name_bn": name.strip(" ।"),
-                        "voter_no_bd": None,
-                        "father_name_bn": "N/A",
-                        "mother_name_bn": "N/A",
-                        "profession_bn": "N/A",
-                        "date_of_birth_bn": "N/A",
-                        "address_bn": "N/A"
-                    })
-                i += 1
-                continue
-
-            # -------- VOTER NO --------
-            if "ভোটার নং" in line:
-                nums = re.findall(r"ভোটার নং[:\.]?\s*([০-৯ ]+)", line)
-                for idx, v in enumerate(nums):
-                    if idx < len(current):
-                        current[idx]["voter_no_bd"] = v.replace(" ", "")
-                i += 1
-                continue
-
-            # -------- FATHER --------
-            if "পিতা:" in line:
-                vals = split_row_by_field(line, "পিতা:")
-                for idx, v in enumerate(vals):
-                    if idx < len(current):
-                        current[idx]["father_name_bn"] = v
-                i += 1
-                continue
-
-            # -------- MOTHER --------
-            if "মাতা:" in line:
-                vals = split_row_by_field(line, "মাতা:")
-                for idx, v in enumerate(vals):
-                    if idx < len(current):
-                        current[idx]["mother_name_bn"] = v
-                i += 1
-                continue
-
-            # -------- PROFESSION + DOB --------
-            DATE_PATTERN = r"[০-৯]{2}/[০-৯]{2}/[০-৯]{4}"
-
-            if "পেশা:" in line:
-                parts = split_row_by_field(line, "পেশা:")
-
-                for idx, p in enumerate(parts):
-                    if idx >= len(current):
-                        continue
-
-                    date_match = re.search(DATE_PATTERN, p)
-                    if date_match:
-                        current[idx]["date_of_birth_bn"] = date_match.group()
-                        p = re.sub(r"(জন্ম\s*)?তারিখ[:：]?\s*" + DATE_PATTERN, "", p)
-
-                    profession = p.strip(" ,।")
-                    current[idx]["profession_bn"] = profession if profession else "N/A"
-
-                i += 1
-                continue
-
-            # -------- ADDRESS --------
-            if "ঠিকানা:" in line:
-                addr_line = line
-                if i + 1 < len(lines) and not re.search(r"[০-৯]+\. নাম:", lines[i + 1]):
-                    if "ঠিকানা:" not in lines[i + 1]:
-                        addr_line += " " + lines[i + 1]
-                        i += 1
-
-                addr_parts = split_row_by_field(addr_line, "ঠিকানা:")
-                for idx, a in enumerate(addr_parts):
-                    if idx < len(current):
-                        current[idx]["address_bn"] = a.strip(", ")
-                i += 1
-                continue
-
-            i += 1
-
-    voters.extend([v for v in current if is_valid(v)])
-    return voters
-
-# -------------------- GRADIO FUNCTION --------------------
-def extract_voters(pdf_file):
-    """Extract voters from uploaded PDF file"""
+def process_pdf(pdf_file):
+    '''Main processing pipeline'''
     if pdf_file is None:
         return {"error": "No file uploaded"}
     
     try:
-        print(f"Received file: {type(pdf_file)}")
-        print(f"File path: {pdf_file if isinstance(pdf_file, str) else getattr(pdf_file, 'name', 'unknown')}")
-        
-        # Handle both filepath string and file object
-        if isinstance(pdf_file, str):
-            # It's a file path
-            file_path = pdf_file
-        elif hasattr(pdf_file, 'name'):
-            # It's a file object with .name attribute
-            file_path = pdf_file.name
-        else:
-            return {"error": "Invalid file object"}
-        
-        # Read the PDF file
-        with open(file_path, 'rb') as f:
+        # Read PDF
+        with open(pdf_file.name if hasattr(pdf_file, 'name') else pdf_file, 'rb') as f:
             pdf_bytes = f.read()
         
-        print(f"PDF size: {len(pdf_bytes)} bytes")
+        print("Converting PDF to images...")
+        images = convert_from_bytes(pdf_bytes, dpi=300)
         
-        # Get page count
-        from pdf2image.pdf2image import pdfinfo_from_bytes
-        info = pdfinfo_from_bytes(pdf_bytes)
-        page_count = info.get('Pages', 1)
+        all_voters = []
+        total_boxes = 0
         
-        print(f"📄 Processing {page_count} pages...")
-        
-        # Convert PDF to images and OCR
-        pages_text = []
-        for page_num in range(1, page_count + 1):
-            print(f"  → Page {page_num}/{page_count}")
-            images = convert_from_bytes(
-                pdf_bytes, 
-                dpi=300,
-                first_page=page_num,
-                last_page=page_num
+        for page_num, page_img in enumerate(images, 1):
+            print(f"Processing page {page_num}/{len(images)}...")
+            
+            # Convert PIL to numpy
+            img_array = np.array(page_img)
+            
+            # Detect voter cards with YOLO
+            results = model.predict(
+                img_array,
+                conf=CONF_THRESHOLD,
+                iou=IOU_THRESHOLD,
+                verbose=False
             )
             
-            if images:
-                txt = pytesseract.image_to_string(images[0], lang=LANG, config=PSM)
-                pages_text.append(txt)
-                del images
+            if len(results) == 0 or len(results[0].boxes) == 0:
+                print(f"  No voter cards detected on page {page_num}")
+                continue
+            
+            # Get bounding boxes
+            boxes = results[0].boxes.xyxy.cpu().numpy()
+            
+            # Filter to similar-sized boxes only
+            filtered_boxes = filter_similar_boxes(boxes)
+            
+            print(f"  Detected {len(filtered_boxes)} voter cards")
+            total_boxes += len(filtered_boxes)
+            
+            # Process each detected box
+            for box_idx, box in enumerate(filtered_boxes):
+                x1, y1, x2, y2 = map(int, box)
+                
+                # Crop voter card
+                crop = img_array[y1:y2, x1:x2]
+                
+                # Extract text
+                text = extract_text_from_crop(crop)
+                
+                # Parse voter info
+                voter_info = parse_voter_info(text)
+                
+                # Add if valid
+                if is_valid_voter(voter_info):
+                    all_voters.append(voter_info)
+                    print(f"    ✓ Box {box_idx+1}: {voter_info['voter_name_bn']}")
         
-        print("🔍 Parsing voter data...")
-        voters = parse_pages(pages_text)
-        print(f"✅ Extracted {len(voters)} valid voters")
+        print(f"\n✓ Total boxes detected: {total_boxes}")
+        print(f"✓ Valid voters extracted: {len(all_voters)}")
         
-        return voters
-        
+        return all_voters
+    
     except Exception as e:
-        print(f"❌ Error: {e}")
         import traceback
         traceback.print_exc()
         return {"error": str(e)}
 
 # -------------------- GRADIO INTERFACE --------------------
-# Remove file_types restriction to allow API uploads
+
 demo = gr.Interface(
-    fn=extract_voters,
-    inputs=gr.File(label="📄 Upload PDF File"),
+    fn=process_pdf,
+    inputs=gr.File(label="📄 Upload Voter Card PDF"),
     outputs=gr.JSON(label="📋 Extracted Voter Data"),
-    title="🗳️ VoterSlip Generator - Bengali OCR",
-    description="""
-    Upload a PDF file containing Bengali voter information to extract structured data.
+    title="🗳️ YOLOv8 + Tesseract Voter Card Extractor",
+    description='''
+    **Advanced Pipeline:**
+    1. 🎯 YOLOv8n detects voter card boxes
+    2. ✂️ Filters uniform-sized boxes only
+    3. 🔍 Tesseract OCR extracts Bengali text
+    4. 📊 Parses structured voter information
     
-    **Extracts:** Name, Voter Number, Father's Name, Mother's Name, Date of Birth, Profession, Address
-    """,
-    examples=[],
+    **Handles:** Multi-column layouts, varying page structures
+    ''',
     api_name="predict"
 )
 
