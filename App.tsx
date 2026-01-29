@@ -161,7 +161,7 @@ function App() {
       
       // Validate that it's an array
       if (!Array.isArray(jsonData)) {
-        showToast(language === 'en' ? 'Invalid JSON format. Expected an array of voter data.' : 'অবৈধ JSON ফরম্যাট। ভোটার ডেটার একটি অ্যারে প্রত্যাশিত।', 'error');
+        showToast(language === 'en' ? 'Invalid JSON format. Expected an array of voter data.' : 'অসমর্থিত JSON ফরম্যাট। ভোটার ডেটার একটি অ্যারে প্রত্যাশিত।', 'error');
         return;
       }
 
@@ -172,7 +172,7 @@ function App() {
       );
 
       if (!isValid) {
-        showToast(language === 'en' ? 'Invalid JSON structure. Missing required fields.' : 'অবৈধ JSON কাঠামো। প্রয়োজনীয় ক্ষেত্র অনুপস্থিত।', 'error');
+        showToast(language === 'en' ? 'Invalid JSON structure. Missing required fields.' : 'অসমর্থিত JSON কাঠামো। প্রয়োজনীয় ক্ষেত্র অনুপস্থিত।', 'error');
         return;
       }
 
@@ -391,12 +391,12 @@ function App() {
                 {darkMode ? (
                   <>
                     <Sun size={18} className="text-yellow-400"/>
-                    {language === 'en' ? 'Light Mode' : 'হালকা মোড'}
+                    {language === 'en' ? 'Light Mode' : 'লাইট মোড'}
                   </>
                 ) : (
                   <>
                     <Moon size={18} className="text-slate-600"/>
-                    {language === 'en' ? 'Dark Mode' : 'অন্ধকার মোড'}
+                    {language === 'en' ? 'Dark Mode' : 'ডার্ক মোড'}
                   </>
                 )}
               </button>
